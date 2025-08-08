@@ -5,7 +5,7 @@
 #
 # Author: Gemini
 #
-# Source: Downloads sing-box directly from official FreeBSD pkg repo
+# GitHub: https://github.com/dayao888/ferrbsd-sbx
 #================================================================
 
 # --- 颜色定义 ---
@@ -16,14 +16,15 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # --- 全局变量 ---
-# 从 FreeBSD 官方仓库下载 .pkg 文件
+# 使用 FreeBSD 官方 pkg 源
 PKG_URL="http://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/sing-box-1.11.9.pkg"
+
 # 安装目录
 INSTALL_BASE="$HOME/.sbx"
 BIN_DIR="$INSTALL_BASE/bin"
 ETC_DIR="$INSTALL_BASE/etc"
 LOG_DIR="$INSTALL_BASE/log"
-TMP_DIR="$INSTALL_BASE/tmp"
+TMP_DIR="/tmp/sbx_install_$$" # 使用唯一的临时目录
 
 # 脚本和配置文件路径
 SING_BOX_BIN="$BIN_DIR/sing-box"
@@ -47,7 +48,7 @@ warn() {
 # 打印错误并退出
 error_exit() {
     printf "${RED}[ERROR] %s${NC}\n" "$1"
-    # 清理可能已创建的临时目录
+    # 清理临时目录
     [ -d "$TMP_DIR" ] && rm -rf "$TMP_DIR"
     exit 1
 }
@@ -63,29 +64,22 @@ check_dependencies() {
     ! command_exists curl && error_exit "curl 未安装，请先安装它。"
     ! command_exists tar && error_exit "tar 未安装，请先安装它。"
     ! command_exists openssl && error_exit "openssl 未安装，请先安装它。"
-    ! command_exists stat && error_exit "stat 未安装，请先安装它。"
     info "所有依赖均已满足。"
 }
 
 # 清理旧的安装
 cleanup_old_install() {
-    if [ -d "$INSTALL_BASE" ]; then
-        warn "检测到旧的安装目录 ($INSTALL_BASE)。"
-        printf "您想卸载旧版本并重新安装吗? (y/n): "
-        read -r choice
-        if [ "$choice" = "y" ] || [ "$choice" = "Y" ]; then
-            info "正在停止可能在运行的服务..."
-            if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
-                kill "$(cat "$PID_FILE")"
-                rm -f "$PID_FILE"
-            fi
-            info "正在删除旧的安装目录..."
-            rm -rf "$INSTALL_BASE"
-            rm -f "$MANAGER_SCRIPT_PATH"
-            info "旧版本已卸载。"
-        else
-            error_exit "安装已取消。"
+    if [ -d "$INSTALL_BASE" ] || [ -f "$MANAGER_SCRIPT_PATH" ]; then
+        warn "检测到旧的安装文件。脚本将先执行卸载操作。"
+        info "正在停止可能在运行的服务..."
+        if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null; then
+            kill "$(cat "$PID_FILE")"
+            rm -f "$PID_FILE"
         fi
+        info "正在删除旧的安装目录..."
+        rm -rf "$INSTALL_BASE"
+        rm -f "$MANAGER_SCRIPT_PATH"
+        info "旧版本已卸载。"
     fi
 }
 
@@ -123,26 +117,29 @@ get_user_config() {
 # 安装 sing-box
 install_sing_box() {
     info "正在创建安装目录..."
-    mkdir -p "$BIN_DIR" "$ETC_DIR" "$LOG_DIR" "$TMP_DIR"
+    mkdir -p "$BIN_DIR" "$ETC_DIR" "$LOG_DIR"
+    
+    info "正在创建临时下载目录: $TMP_DIR"
+    mkdir -p "$TMP_DIR"
 
     info "正在从 FreeBSD 官方源下载 sing-box 核心包..."
-    curl -L -f -o "$TMP_DIR/sing-box.pkg" "$PKG_URL" || error_exit "下载 sing-box 核心失败。请检查 URL 或网络。"
+    curl -L -o "$TMP_DIR/sing-box.pkg" "$PKG_URL" || error_exit "下载 sing-box 核心失败。"
 
-    # 检查下载的文件大小是否合理
-    FILE_SIZE=$(stat -f%z "$TMP_DIR/sing-box.pkg")
-    if [ "$FILE_SIZE" -lt 1000000 ]; then
-        error_exit "下载的核心文件大小异常 ($FILE_SIZE bytes)。可能下载已损坏。"
+    DOWNLOADED_SIZE=$(stat -f%z "$TMP_DIR/sing-box.pkg")
+    info "正在解压核心包 (文件大小: $DOWNLOADED_SIZE bytes)..."
+    
+    if [ "$DOWNLOADED_SIZE" -lt 102400 ]; then # 小于100KB，肯定有问题
+        error_exit "下载的 sing-box.pkg 文件大小异常，请检查网络或链接有效性。"
     fi
 
-    info "正在解压核心包 (文件大小: ${FILE_SIZE} bytes)..."
-    tar -xf "$TMP_DIR/sing-box.pkg" -C "$TMP_DIR" || error_exit "解压核心包失败。可能文件已损坏或不是有效的 .pkg (tar) 格式。"
+    tar -xf "$TMP_DIR/sing-box.pkg" -C "$TMP_DIR" --strip-components 3 '*/local/bin/sing-box' || error_exit "解压核心包失败。"
 
     info "正在安装 sing-box 二进制文件..."
-    if [ -f "$TMP_DIR/usr/local/bin/sing-box" ]; then
-        mv "$TMP_DIR/usr/local/bin/sing-box" "$SING_BOX_BIN"
+    if [ -f "$TMP_DIR/sing-box" ]; then
+        mv "$TMP_DIR/sing-box" "$SING_BOX_BIN"
         chmod +x "$SING_BOX_BIN"
     else
-        error_exit "在 .pkg 文件中未找到 sing-box 二进制文件。解压后的目录结构可能不符合预期。"
+        error_exit "在 .pkg 文件中未找到 sing-box 二进制文件。"
     fi
 
     info "正在清理临时文件..."
@@ -159,9 +156,11 @@ generate_config() {
     HYS_PASS=$(openssl rand -hex 16)
     
     info "正在生成 REALITY 密钥对..."
-    KEY_PAIR=$("$SING_BOX_BIN" generate reality-keypair)
+    # 确保路径正确，并处理可能的错误
+    KEY_PAIR=$("$SING_BOX_BIN" generate reality-keypair) || error_exit "生成 REALITY 密钥对失败。"
     PRIVATE_KEY=$(echo "$KEY_PAIR" | awk '/PrivateKey/ {print $2}')
     PUBLIC_KEY=$(echo "$KEY_PAIR" | awk '/PublicKey/ {print $2}')
+    [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ] && error_exit "从密钥对中提取公钥或私钥失败。"
 
     info "正在生成 config.json 配置文件..."
     cat > "$CONFIG_FILE" << EOF
@@ -238,50 +237,51 @@ EOF
 # 创建管理脚本
 create_manager_script() {
     info "正在创建管理脚本 (sbx.sh)..."
-    cat > "$MANAGER_SCRIPT_PATH" << EOF
+    # 使用 cat <<'EOF' 替代 cat <<EOF, 防止本地变量被意外替换
+    cat > "$MANAGER_SCRIPT_PATH" << 'EOF'
 #!/bin/sh
 
 # --- 全局变量 ---
-INSTALL_BASE="$INSTALL_BASE"
-SING_BOX_BIN="\$INSTALL_BASE/bin/sing-box"
-CONFIG_FILE="\$INSTALL_BASE/etc/config.json"
-LOG_FILE="\$INSTALL_BASE/log/sing-box.log"
-PID_FILE="\$INSTALL_BASE/log/sing-box.pid"
-MANAGER_SCRIPT_PATH="$MANAGER_SCRIPT_PATH"
+INSTALL_BASE="$HOME/.sbx"
+SING_BOX_BIN="$INSTALL_BASE/bin/sing-box"
+CONFIG_FILE="$INSTALL_BASE/etc/config.json"
+LOG_FILE="$INSTALL_BASE/log/sing-box.log"
+PID_FILE="$INSTALL_BASE/log/sing-box.pid"
+MANAGER_SCRIPT_PATH="$HOME/sbx.sh"
 
 # --- 颜色定义 ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m'
+NC='\033[0m' # No Color
 
 # --- 函数 ---
 start() {
-    if [ -f "\$PID_FILE" ] && ps -p \$(cat "\$PID_FILE") > /dev/null; then
-        printf "\${YELLOW}sing-box 已经在运行了。\${NC}\n"
+    if [ -f "$PID_FILE" ] && ps -p $(cat "$PID_FILE") > /dev/null; then
+        printf "${YELLOW}sing-box 已经在运行了。${NC}\n"
         return
     fi
-    printf "\${GREEN}正在启动 sing-box...${NC}\n"
-    nohup "\$SING_BOX_BIN" run -c "\$CONFIG_FILE" > "\$LOG_FILE" 2>&1 &
-    echo \$! > "\$PID_FILE"
+    printf "${GREEN}正在启动 sing-box...${NC}\n"
+    nohup "$SING_BOX_BIN" run -c "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
     sleep 1
-    if [ -f "\$PID_FILE" ] && ps -p \$(cat "\$PID_FILE") > /dev/null; then
-        printf "\${GREEN}sing-box 启动成功！PID: \$(cat \$PID_FILE)${NC}\n"
+    if [ -f "$PID_FILE" ] && ps -p $(cat "$PID_FILE") > /dev/null; then
+        printf "${GREEN}sing-box 启动成功！PID: $(cat $PID_FILE)${NC}\n"
     else
-        printf "\${RED}sing-box 启动失败，请查看日志: \$LOG_FILE${NC}\n"
+        printf "${RED}sing-box 启动失败，请查看日志: $LOG_FILE${NC}\n"
     fi
 }
 
 stop() {
-    if [ ! -f "\$PID_FILE" ]; then
-        printf "\${YELLOW}sing-box 没有在运行。\${NC}\n"
+    if [ ! -f "$PID_FILE" ]; then
+        printf "${YELLOW}sing-box 没有在运行。${NC}\n"
         return
     fi
-    printf "\${GREEN}正在停止 sing-box...${NC}\n"
-    kill \$(cat "\$PID_FILE")
-    rm -f "\$PID_FILE"
-    printf "\${GREEN}sing-box 已停止。\${NC}\n"
+    printf "${GREEN}正在停止 sing-box...${NC}\n"
+    kill $(cat "$PID_FILE")
+    rm -f "$PID_FILE"
+    printf "${GREEN}sing-box 已停止。${NC}\n"
 }
 
 restart() {
@@ -291,71 +291,71 @@ restart() {
 }
 
 status() {
-    if [ -f "\$PID_FILE" ] && ps -p \$(cat "\$PID_FILE") > /dev/null; then
-        printf "\${GREEN}sing-box 正在运行。PID: \$(cat \$PID_FILE)${NC}\n"
+    if [ -f "$PID_FILE" ] && ps -p $(cat "$PID_FILE") > /dev/null; then
+        printf "${GREEN}sing-box 正在运行。PID: $(cat $PID_FILE)${NC}\n"
     else
-        printf "\${RED}sing-box 已停止。\${NC}\n"
+        printf "${RED}sing-box 已停止。${NC}\n"
     fi
 }
 
 show_log() {
-    printf "\${GREEN}正在显示实时日志 (按 Ctrl+C 退出)...${NC}\n"
-    tail -f "\$LOG_FILE"
+    printf "${GREEN}正在显示实时日志 (按 Ctrl+C 退出)...${NC}\n"
+    tail -f "$LOG_FILE"
 }
 
 show_links() {
-    # 从安装时保存的变量中提取信息
-    SERVER_ADDR="$SERVER_ADDR"
-    VLESS_PORT=$VLESS_PORT
-    VMESS_PORT=$VMESS_PORT
-    HYSTERIA2_PORT=$HYSTERIA2_PORT
-    VLESS_UUID="$VLESS_UUID"
-    VMESS_UUID="$VMESS_UUID"
-    HYS_PASS="$HYS_PASS"
-    PUBLIC_KEY="$PUBLIC_KEY"
+    # 这些变量将在下面的替换步骤中被实际值填充
+    SERVER_ADDR="__SERVER_ADDR__"
+    VLESS_PORT="__VLESS_PORT__"
+    VMESS_PORT="__VMESS_PORT__"
+    HYSTERIA2_PORT="__HYSTERIA2_PORT__"
+    VLESS_UUID="__VLESS_UUID__"
+    VMESS_UUID="__VMESS_UUID__"
+    HYS_PASS="__HYS_PASS__"
+    PUBLIC_KEY="__PUBLIC_KEY__"
     DOMAIN_OR_IP="$SERVER_ADDR"
 
     # 生成链接
-    VLESS_LINK="vless://\${VLESS_UUID}@\${DOMAIN_OR_IP}:\${VLESS_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=\${PUBLIC_KEY}&type=tcp#VLESS-REALITY"
-    VMESS_RAW="{\\"v\\":\\"2\\",\\"ps\\":\\"VMess-WS\\",\\"add\\":\\"\${DOMAIN_OR_IP}\\",\\"port\\":\\"\${VMESS_PORT}\\",\\"id\\":\\"\${VMESS_UUID}\\",\\"aid\\":0,\\"net\\":\\"ws\\",\\"type\\":\\"none\\",\\"host\\":\\"\\",\\"path\\":\\"/vmess\\",\\"tls\\":\\"\\"}"
-    VMESS_LINK="vmess://\$(echo "\$VMESS_RAW" | base64 -w 0)"
-    HYSTERIA2_LINK="hysteria2://\${HYS_PASS}@\${DOMAIN_OR_IP}:\${HYSTERIA2_PORT}?sni=www.microsoft.com#Hysteria2"
+    VLESS_LINK="vless://${VLESS_UUID}@${DOMAIN_OR_IP}:${VLESS_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=${PUBLIC_KEY}&type=tcp#VLESS-REALITY"
+    VMESS_RAW="{\"v\":\"2\",\"ps\":\"VMess-WS\",\"add\":\"${DOMAIN_OR_IP}\",\"port\":\"${VMESS_PORT}\",\"id\":\"${VMESS_UUID}\",\"aid\":0,\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/vmess\",\"tls\":\"\"}"
+    VMESS_LINK="vmess://$(echo "$VMESS_RAW" | base64 -w 0)"
+    HYSTERIA2_LINK="hysteria2://${HYS_PASS}@${DOMAIN_OR_IP}:${HYSTERIA2_PORT}?sni=www.microsoft.com#Hysteria2"
     
     # 订阅链接
-    ALL_LINKS="\${VLESS_LINK}\n\${VMESS_LINK}\n\${HYSTERIA2_LINK}"
-    SUB_LINK="data:text/plain;base64,\$(echo "\$ALL_LINKS" | base64 -w 0)"
+    ALL_LINKS="${VLESS_LINK}\n${VMESS_LINK}\n${HYSTERIA2_LINK}"
+    SUB_LINK="data:text/plain;base64,$(echo "$ALL_LINKS" | base64 -w 0)"
 
     printf "\n"
     printf "================================================================\n"
     printf "${GREEN}安装完成！您的节点信息如下：${NC}\n"
     printf "================================================================\n"
     printf "${BLUE}VLESS + REALITY:${NC}\n"
-    printf "%s\n" "\$VLESS_LINK"
+    printf "%s\n" "$VLESS_LINK"
     printf "----------------------------------------------------------------\n"
     printf "${BLUE}VMess + WebSocket:${NC}\n"
-    printf "%s\n" "\$VMESS_LINK"
+    printf "%s\n" "$VMESS_LINK"
     printf "----------------------------------------------------------------\n"
     printf "${BLUE}Hysteria 2:${NC}\n"
-    printf "%s\n" "\$HYSTERIA2_LINK"
+    printf "%s\n" "$HYSTERIA2_LINK"
     printf "----------------------------------------------------------------\n"
     printf "${YELLOW}订阅链接:${NC}\n"
-    printf "%s\n" "\$SUB_LINK"
+    printf "%s\n" "$SUB_LINK"
     printf "================================================================\n"
 }
 
 uninstall() {
-    printf "\${RED}警告：这将停止服务并删除所有相关文件 (${INSTALL_BASE})。${NC}\n"
+    printf "${RED}警告：这将停止服务并删除所有相关文件 (${INSTALL_BASE})。${NC}\n"
     printf "您确定要卸载吗? (y/n): "
     read -r choice
-    if [ "\$choice" = "y" ] || [ "\$choice" = "Y" ]; then
+    if [ "$choice" = "y" ] || [ "$choice" = "Y" ]; then
         stop
-        printf "\${GREEN}正在删除安装目录...${NC}\n"
-        rm -rf "\$INSTALL_BASE"
-        printf "\${GREEN}正在删除管理脚本...${NC}\n"
-        rm -f "\$MANAGER_SCRIPT_PATH"
-        printf "\${GREEN}卸载完成！${NC}\n"
+        printf "${GREEN}正在删除安装目录...${NC}\n"
+        rm -rf "$INSTALL_BASE"
+        printf "${GREEN}正在删除管理脚本...${NC}\n"
+        rm -f "$MANAGER_SCRIPT_PATH"
+        printf "${GREEN}卸载完成！${NC}\n"
     else
-        printf "\${YELLOW}卸载已取消。${NC}\n"
+        printf "${YELLOW}卸载已取消。${NC}\n"
     fi
 }
 
@@ -375,7 +375,7 @@ show_menu() {
     printf "================================================\n"
     printf "请输入选项 [0-7]: "
     read -r option
-    case \$option in
+    case $option in
         1) start ;;
         2) stop ;;
         3) restart ;;
@@ -384,36 +384,65 @@ show_menu() {
         6) show_links ;;
         7) uninstall ;;
         0) exit 0 ;;
-        *) printf "\${RED}无效的选项!${NC}\n" ;;
+        *) printf "${RED}无效的选项!${NC}\n" ;;
     esac
 }
 
 # --- 主逻辑 ---
-if [ \$# -eq 0 ]; then
-    show_menu
-    exit 0
-fi
+# 如果没有参数，则显示菜单。否则，执行对应命令。
+main() {
+    ACTION=${1:-menu}
 
-case "\$1" in
-    start|stop|restart|status|log|links|uninstall|menu)
-        "\$1"
-        ;;
-    *)
-        printf "用法: \$0 {start|stop|restart|status|log|links|uninstall|menu}\n"
-        exit 1
-        ;;
-esac
+    case "$ACTION" in
+        start) start ;;
+        stop) stop ;;
+        restart) restart ;;
+        status) status ;;
+        log) show_log ;;
+        links) show_links ;;
+        uninstall) uninstall ;;
+        menu)
+            while true; do
+                show_menu
+                printf "\n按 Enter 键返回菜单..."
+                read -r _
+            done
+            ;;
+        *)
+            printf "${RED}用法: $0 {start|stop|restart|status|log|links|uninstall|menu}${NC}\n"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
+
 EOF
+    # --- 变量替换 ---
+    # 使用 sed 将占位符替换为实际值
+    sed -i '' "s|__SERVER_ADDR__|${SERVER_ADDR}|g" "$MANAGER_SCRIPT_PATH"
+    sed -i '' "s|__VLESS_PORT__|${VLESS_PORT}|g" "$MANAGER_SCRIPT_PATH"
+    sed -i '' "s|__VMESS_PORT__|${VMESS_PORT}|g" "$MANAGER_SCRIPT_PATH"
+    sed -i '' "s|__HYSTERIA2_PORT__|${HYSTERIA2_PORT}|g" "$MANAGER_SCRIPT_PATH"
+    sed -i '' "s|__VLESS_UUID__|${VLESS_UUID}|g" "$MANAGER_SCRIPT_PATH"
+    sed -i '' "s|__VMESS_UUID__|${VMESS_UUID}|g" "$MANAGER_SCRIPT_PATH"
+    sed -i '' "s|__HYS_PASS__|${HYS_PASS}|g" "$MANAGER_SCRIPT_PATH"
+    sed -i '' "s|__PUBLIC_KEY__|${PUBLIC_KEY}|g" "$MANAGER_SCRIPT_PATH"
+
     chmod +x "$MANAGER_SCRIPT_PATH"
     info "管理脚本创建成功: $MANAGER_SCRIPT_PATH"
 }
 
+
 # --- 主执行流程 ---
 main() {
+    # 确保在脚本退出或中断时清理临时文件
+    trap 'rm -rf "$TMP_DIR"' EXIT
+
     clear
-    echo "================================================================"
+    echo "================================================================="
     echo "     欢迎使用 FreeBSD (non-root) sing-box 一键安装脚本"
-    echo "================================================================"
+    echo "================================================================="
     echo
     
     check_dependencies
@@ -425,11 +454,14 @@ main() {
 
     # 启动服务并显示链接
     info "正在首次启动服务..."
-    # 这里需要直接调用函数，而不是通过 sh 脚本，以确保变量能传递
-    start
-    show_links
+    sh "$MANAGER_SCRIPT_PATH" start
     
-    info "您可以使用 './sbx.sh menu' 命令来管理服务。"
+    info "服务启动成功！您的节点信息如下："
+    sh "$MANAGER_SCRIPT_PATH" links
+    
+    echo
+    info "安装全部完成！"
+    info "您随时可以使用 'sh $MANAGER_SCRIPT_PATH' 或 './sbx.sh' 命令来管理服务和查看链接。"
 }
 
 # 运行主函数
