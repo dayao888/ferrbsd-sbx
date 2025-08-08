@@ -1,0 +1,126 @@
+# FreeBSD科学上网脚本配置模板
+# 复制此文件为 config.conf 并修改相应参数
+
+# 基本配置
+WORKDIR="$HOME/.freebsd-proxy"
+LOG_LEVEL="info"  # debug, info, warn, error
+
+# 端口配置
+# 留空则使用默认端口，设置为 "auto" 则自动分配可用端口
+VLESS_PORT="28332"     # VLESS Reality端口
+VMESS_PORT="38533"     # VMess WebSocket端口
+HY2_PORT="38786"       # Hysteria2端口
+
+# Reality配置
+# 可选的伪装域名，随机选择一个
+REALITY_DOMAINS=(
+    "www.microsoft.com"
+    "www.apple.com"
+    "www.cloudflare.com"
+    "www.github.com"
+    "www.amazon.com"
+    "www.netflix.com"
+)
+
+# Hysteria2伪装站点
+MASQUERADE_SITES=(
+    "https://www.bing.com"
+    "https://www.google.com"
+    "https://www.github.com"
+    "https://www.cloudflare.com"
+)
+
+# 网络配置
+# 服务器IP获取方式：auto, manual, ipv4, ipv6
+IP_MODE="auto"
+# 手动指定IP（当IP_MODE为manual时使用）
+MANUAL_IP=""
+
+# 安全配置
+# 是否启用随机端口（true/false）
+RANDOM_PORTS="false"
+# 是否启用端口跳跃（定期更换端口）
+PORT_HOPPING="false"
+# 端口跳跃间隔（小时）
+PORT_HOPPING_INTERVAL="24"
+
+# 性能配置
+# TCP发送缓冲区大小
+TCP_SEND_BUFFER="65536"
+# TCP接收缓冲区大小
+TCP_RECV_BUFFER="65536"
+# 最大文件描述符数量
+MAX_FILES="65536"
+
+# 日志配置
+# 日志文件最大大小（MB）
+LOG_MAX_SIZE="100"
+# 保留的日志文件数量
+LOG_MAX_FILES="5"
+# 是否启用访问日志
+ACCESS_LOG="false"
+
+# 备份配置
+# 自动备份间隔（天）
+AUTO_BACKUP_INTERVAL="7"
+# 保留的备份文件数量
+BACKUP_MAX_FILES="10"
+
+# 监控配置
+# 是否启用性能监控
+PERF_MONITOR="true"
+# 监控数据保留天数
+MONITOR_RETENTION="30"
+
+# 更新配置
+# 是否启用自动更新检查
+AUTO_UPDATE_CHECK="true"
+# 更新检查间隔（天）
+UPDATE_CHECK_INTERVAL="7"
+
+# 通知配置
+# 通知方式：none, email, webhook
+NOTIFY_METHOD="none"
+# 邮件通知配置（当NOTIFY_METHOD为email时）
+EMAIL_TO=""
+EMAIL_FROM=""
+SMTP_SERVER=""
+SMTP_PORT="587"
+SMTP_USER=""
+SMTP_PASS=""
+# Webhook通知配置（当NOTIFY_METHOD为webhook时）
+WEBHOOK_URL=""
+
+# 高级配置
+# 是否启用实验性功能
+EXPERIMENTAL_FEATURES="false"
+# 自定义DNS服务器
+CUSTOM_DNS="8.8.8.8,1.1.1.1"
+# 是否启用IPv6支持
+IPV6_SUPPORT="true"
+# 是否启用流量统计
+TRAFFIC_STATS="true"
+
+# 防火墙配置
+# 是否自动配置防火墙规则
+AUTO_FIREWALL="false"
+# 允许的IP范围（CIDR格式，多个用逗号分隔）
+ALLOWED_IPS="0.0.0.0/0,::/0"
+# 是否启用DDoS防护
+DDOS_PROTECTION="false"
+
+# 证书配置
+# 证书有效期（天）
+CERT_VALIDITY="3650"
+# 是否自动续期证书
+AUTO_RENEW_CERT="true"
+# 证书续期提前天数
+CERT_RENEW_DAYS="30"
+
+# 调试配置
+# 是否启用调试模式
+DEBUG_MODE="false"
+# 调试日志级别
+DEBUG_LEVEL="debug"
+# 是否保存调试信息
+SAVE_DEBUG_INFO="false"

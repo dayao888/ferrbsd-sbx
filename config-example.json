@@ -1,0 +1,82 @@
+{
+  "log": {
+    "level": "info",
+    "output": "/home/user/.freebsd-proxy/sing-box.log",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "tag": "vless-reality",
+      "type": "vless",
+      "listen": "::",
+      "listen_port": 28332,
+      "users": [
+        {
+          "uuid": "12345678-1234-1234-1234-123456789abc",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "www.microsoft.com",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "www.microsoft.com",
+            "server_port": 443
+          },
+          "private_key": "EXAMPLE_PRIVATE_KEY",
+          "short_id": [""]
+        }
+      }
+    },
+    {
+      "tag": "vmess-ws",
+      "type": "vmess",
+      "listen": "::",
+      "listen_port": 38533,
+      "users": [
+        {
+          "uuid": "12345678-1234-1234-1234-123456789abc"
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/12345678-1234-1234-1234-123456789abc-vm",
+        "early_data_header_name": "Sec-WebSocket-Protocol"
+      }
+    },
+    {
+      "tag": "hysteria2",
+      "type": "hysteria2",
+      "listen": "::",
+      "listen_port": 38786,
+      "users": [
+        {
+          "password": "12345678-1234-1234-1234-123456789abc"
+        }
+      ],
+      "masquerade": "https://www.bing.com",
+      "tls": {
+        "enabled": true,
+        "alpn": ["h3"],
+        "certificate_path": "/home/user/.freebsd-proxy/cert.pem",
+        "key_path": "/home/user/.freebsd-proxy/private.key"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "outbound": "direct"
+      }
+    ]
+  }
+}
