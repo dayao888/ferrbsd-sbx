@@ -5,7 +5,7 @@
 #
 # Author: Gemini
 #
-# GitHub: https://github.com/dayao888/ferrbsd-sbx
+# Source: Downloads sing-box directly from official FreeBSD pkg repo
 #================================================================
 
 # --- 颜色定义 ---
@@ -16,8 +16,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # --- 全局变量 ---
-# 从您的 GitHub 仓库下载 .pkg 文件 (使用正确的 LFS 原始链接)
-PKG_URL="https://media.githubusercontent.com/media/dayao888/ferrbsd-sbx/main/sing-box-1.11.9.pkg"
+# 从 FreeBSD 官方仓库下载 .pkg 文件
+PKG_URL="http://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/sing-box-1.11.9.pkg"
 # 安装目录
 INSTALL_BASE="$HOME/.sbx"
 BIN_DIR="$INSTALL_BASE/bin"
@@ -47,6 +47,8 @@ warn() {
 # 打印错误并退出
 error_exit() {
     printf "${RED}[ERROR] %s${NC}\n" "$1"
+    # 清理可能已创建的临时目录
+    [ -d "$TMP_DIR" ] && rm -rf "$TMP_DIR"
     exit 1
 }
 
@@ -61,6 +63,7 @@ check_dependencies() {
     ! command_exists curl && error_exit "curl 未安装，请先安装它。"
     ! command_exists tar && error_exit "tar 未安装，请先安装它。"
     ! command_exists openssl && error_exit "openssl 未安装，请先安装它。"
+    ! command_exists stat && error_exit "stat 未安装，请先安装它。"
     info "所有依赖均已满足。"
 }
 
@@ -122,19 +125,24 @@ install_sing_box() {
     info "正在创建安装目录..."
     mkdir -p "$BIN_DIR" "$ETC_DIR" "$LOG_DIR" "$TMP_DIR"
 
-    info "正在从 GitHub 下载 sing-box 核心包..."
-    curl -L -o "$TMP_DIR/sing-box.pkg" "$PKG_URL" || error_exit "下载 sing-box 核心失败。"
+    info "正在从 FreeBSD 官方源下载 sing-box 核心包..."
+    curl -L -f -o "$TMP_DIR/sing-box.pkg" "$PKG_URL" || error_exit "下载 sing-box 核心失败。请检查 URL 或网络。"
 
-    info "正在解压核心包..."
-    tar -xf "$TMP_DIR/sing-box.pkg" -C "$TMP_DIR" || error_exit "解压核心包失败。"
+    # 检查下载的文件大小是否合理
+    FILE_SIZE=$(stat -f%z "$TMP_DIR/sing-box.pkg")
+    if [ "$FILE_SIZE" -lt 1000000 ]; then
+        error_exit "下载的核心文件大小异常 ($FILE_SIZE bytes)。可能下载已损坏。"
+    fi
+
+    info "正在解压核心包 (文件大小: ${FILE_SIZE} bytes)..."
+    tar -xf "$TMP_DIR/sing-box.pkg" -C "$TMP_DIR" || error_exit "解压核心包失败。可能文件已损坏或不是有效的 .pkg (tar) 格式。"
 
     info "正在安装 sing-box 二进制文件..."
-    # 从解压后的目录中找到并移动二进制文件
     if [ -f "$TMP_DIR/usr/local/bin/sing-box" ]; then
         mv "$TMP_DIR/usr/local/bin/sing-box" "$SING_BOX_BIN"
         chmod +x "$SING_BOX_BIN"
     else
-        error_exit "在 .pkg 文件中未找到 sing-box 二进制文件。"
+        error_exit "在 .pkg 文件中未找到 sing-box 二进制文件。解压后的目录结构可能不符合预期。"
     fi
 
     info "正在清理临时文件..."
@@ -150,7 +158,7 @@ generate_config() {
     VMESS_UUID=$(openssl rand -hex 16)
     HYS_PASS=$(openssl rand -hex 16)
     
-    # 生成 REALITY 密钥对
+    info "正在生成 REALITY 密钥对..."
     KEY_PAIR=$("$SING_BOX_BIN" generate reality-keypair)
     PRIVATE_KEY=$(echo "$KEY_PAIR" | awk '/PrivateKey/ {print $2}')
     PUBLIC_KEY=$(echo "$KEY_PAIR" | awk '/PublicKey/ {print $2}')
@@ -296,7 +304,7 @@ show_log() {
 }
 
 show_links() {
-    # 从配置文件中提取信息
+    # 从安装时保存的变量中提取信息
     SERVER_ADDR="$SERVER_ADDR"
     VLESS_PORT=$VLESS_PORT
     VMESS_PORT=$VMESS_PORT
@@ -417,8 +425,9 @@ main() {
 
     # 启动服务并显示链接
     info "正在首次启动服务..."
-    sh "$MANAGER_SCRIPT_PATH" start
-    sh "$MANAGER_SCRIPT_PATH" links
+    # 这里需要直接调用函数，而不是通过 sh 脚本，以确保变量能传递
+    start
+    show_links
     
     info "您可以使用 './sbx.sh menu' 命令来管理服务。"
 }
