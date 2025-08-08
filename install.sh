@@ -15,23 +15,20 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # --- 全局变量 ---
-# 使用系统已安装的 sing-box
-SYSTEM_SING_BOX="/usr/local/bin/sing-box"
+# 使用 sing-box 官方 GitHub 发布版本（包含完整功能）
+SING_BOX_VERSION="1.11.9"
+PKG_URL="https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-freebsd-amd64.tar.gz"
 INSTALL_BASE="$HOME/.sbx"
 BIN_DIR="$INSTALL_BASE/bin"
 ETC_DIR="$INSTALL_BASE/etc"
 LOG_DIR="$INSTALL_BASE/log"
-CERT_DIR="$INSTALL_BASE/certs"
+TMP_DIR="/tmp/sbx_install_$$"
 
 SING_BOX_BIN="$BIN_DIR/sing-box"
 CONFIG_FILE="$ETC_DIR/config.json"
 LOG_FILE="$LOG_DIR/sing-box.log"
 PID_FILE="$LOG_DIR/sing-box.pid"
 MANAGER_SCRIPT_PATH="$HOME/sbx.sh"
-
-# 证书文件路径
-CERT_FILE="$CERT_DIR/server.crt"
-KEY_FILE="$CERT_DIR/server.key"
 
 # --- 函数定义 ---
 
@@ -45,6 +42,7 @@ warn() {
 
 error_exit() {
     printf "${RED}[ERROR] %s${NC}\n" "$1"
+    [ -d "$TMP_DIR" ] && rm -rf "$TMP_DIR"
     exit 1
 }
 
@@ -54,151 +52,120 @@ command_exists() {
 
 check_dependencies() {
     info "正在检查系统依赖..."
-    
-    # 检查必需的命令
-    for cmd in curl openssl; do
-        if ! command_exists "$cmd"; then
-            error_exit "缺少必需的命令: $cmd，请先安装。"
-        fi
-    done
-    
-    # 检查 sing-box 是否已安装
-    if [ ! -f "$SYSTEM_SING_BOX" ]; then
-        error_exit "系统中未找到 sing-box，请先运行: pkg install sing-box"
-    fi
-    
-    info "系统依赖检查完成。"
+    ! command_exists curl && error_exit "curl 未安装，请先安装它。"
+    ! command_exists tar && error_exit "tar 未安装，请先安装它。"
+    ! command_exists openssl && error_exit "openssl 未安装，请先安装它。"
+    info "所有依赖均已满足。"
 }
 
-get_public_ip() {
-    info "正在获取公网 IP..."
-    PUBLIC_IP=$(curl -s --connect-timeout 10 ipinfo.io/ip || curl -s --connect-timeout 10 ifconfig.me || curl -s --connect-timeout 10 icanhazip.com)
-    if [ -z "$PUBLIC_IP" ]; then
-        warn "无法获取公网 IP，将使用 127.0.0.1"
-        PUBLIC_IP="127.0.0.1"
-    else
-        info "获取到公网 IP: $PUBLIC_IP"
+cleanup_old_install() {
+    if [ -d "$INSTALL_BASE" ] || [ -f "$MANAGER_SCRIPT_PATH" ]; then
+        warn "检测到旧的安装文件。脚本将先执行卸载操作。"
+        info "正在停止可能在运行的服务..."
+        if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null 2>&1; then
+            kill "$(cat "$PID_FILE")"
+            rm -f "$PID_FILE"
+        fi
+        info "正在删除旧的安装目录..."
+        rm -rf "$INSTALL_BASE"
+        rm -f "$MANAGER_SCRIPT_PATH"
+        info "旧版本已卸载。"
+    fi
+    
+    # 检查并提醒卸载系统安装的 sing-box
+    if command_exists sing-box && [ "$(which sing-box)" = "/usr/local/bin/sing-box" ]; then
+        warn "检测到系统已安装 sing-box，建议先手动卸载以避免冲突：pkg delete -y sing-box"
     fi
 }
 
 get_user_config() {
-    info "开始交互式配置..."
-    
-    # 获取域名（可选）
-    printf "${BLUE}请输入您的域名 (可选，直接回车跳过): ${NC}"
-    read -r DOMAIN
-    if [ -z "$DOMAIN" ]; then
-        DOMAIN="www.microsoft.com"
-        info "使用默认域名: $DOMAIN"
-    fi
-    
-    # 获取端口配置
-    while true; do
-        printf "${BLUE}请输入您为 VLESS-Reality 准备的端口号: ${NC}"
-        read -r VLESS_PORT
-        if [ -n "$VLESS_PORT" ] && [ "$VLESS_PORT" -ge 1 ] && [ "$VLESS_PORT" -le 65535 ]; then
-            break
-        else
-            error_exit "端口号不能为空，且必须在 1-65535 范围内。"
-        fi
-    done
-    
-    while true; do
-        printf "${BLUE}请输入您为 VMess-WS 准备的端口号: ${NC}"
-        read -r VMESS_PORT
-        if [ -n "$VMESS_PORT" ] && [ "$VMESS_PORT" -ge 1 ] && [ "$VMESS_PORT" -le 65535 ]; then
-            break
-        else
-            error_exit "端口号不能为空，且必须在 1-65535 范围内。"
-        fi
-    done
-    
-    while true; do
-        printf "${BLUE}请输入您为 Hysteria2 准备的端口号: ${NC}"
-        read -r HYSTERIA2_PORT
-        if [ -n "$HYSTERIA2_PORT" ] && [ "$HYSTERIA2_PORT" -ge 1 ] && [ "$HYSTERIA2_PORT" -le 65535 ]; then
-            break
-        else
-            error_exit "端口号不能为空，且必须在 1-65535 范围内。"
-        fi
-    done
-}
-
-cleanup_old_installation() {
-    info "正在清理旧版本安装..."
-    
-    # 停止服务（如果正在运行）
-    if [ -f "$PID_FILE" ]; then
-        OLD_PID=$(cat "$PID_FILE")
-        if kill -0 "$OLD_PID" 2>/dev/null; then
-            info "正在停止旧的 sing-box 服务..."
-            kill "$OLD_PID"
-            sleep 2
-        fi
-        rm -f "$PID_FILE"
-    fi
-    
-    # 清理旧文件
-    [ -d "$INSTALL_BASE" ] && rm -rf "$INSTALL_BASE"
-    [ -f "$MANAGER_SCRIPT_PATH" ] && rm -f "$MANAGER_SCRIPT_PATH"
-    
-    info "旧版本清理完成。"
-}
-
-setup_sing_box() {
-    info "正在设置 sing-box 环境..."
-    mkdir -p "$BIN_DIR" "$ETC_DIR" "$LOG_DIR" "$CERT_DIR"
-    
-    # 创建 sing-box 的符号链接到用户目录
-    if [ -f "$SYSTEM_SING_BOX" ]; then
-        ln -sf "$SYSTEM_SING_BOX" "$SING_BOX_BIN"
-        info "sing-box 环境设置成功！"
+    printf "您是否要为配置绑定一个域名? (建议使用) (y/n): "
+    read -r use_domain
+    if [ "$use_domain" = "y" ] || [ "$use_domain" = "Y" ]; then
+        printf "请输入您的域名: "
+        read -r DOMAIN
+        [ -z "$DOMAIN" ] && error_exit "域名不能为空。"
+        SERVER_ADDR="$DOMAIN"
     else
-        error_exit "系统中的 sing-box 不存在，请检查安装。"
+        info "您选择了不使用域名，将自动获取服务器的公网 IP 地址。"
+        SERVER_ADDR=$(curl -s https://api.ipify.org)
+        [ -z "$SERVER_ADDR" ] && error_exit "无法自动获取公网 IP，请检查网络或手动指定域名。"
+        info "获取到公网 IP: $SERVER_ADDR"
     fi
+
+    printf "请输入您为 ${BLUE}VLESS-Reality${NC} 准备的端口号: "
+    read -r VLESS_PORT
+    [ -z "$VLESS_PORT" ] && error_exit "端口号不能为空。"
+
+    printf "请输入您为 ${BLUE}VMess-WS${NC} 准备的端口号: "
+    read -r VMESS_PORT
+    [ -z "$VMESS_PORT" ] && error_exit "端口号不能为空。"
+
+    printf "请输入您为 ${BLUE}Hysteria2${NC} 准备的端口号: "
+    read -r HYSTERIA2_PORT
+    [ -z "$HYSTERIA2_PORT" ] && error_exit "端口号不能为空。"
 }
 
-generate_certificates() {
-    info "正在生成自签名证书用于 Hysteria2..."
-    
-    # 生成私钥
-    openssl genrsa -out "$KEY_FILE" 2048 || error_exit "生成私钥失败。"
-    
-    # 生成自签名证书
-    openssl req -new -x509 -key "$KEY_FILE" -out "$CERT_FILE" -days 365 -subj "/C=US/ST=CA/L=LA/O=SBX/CN=$DOMAIN" || error_exit "生成证书失败。"
-    
-    info "证书生成成功！"
-}
+install_sing_box() {
+    info "正在创建安装目录..."
+    mkdir -p "$BIN_DIR" "$ETC_DIR" "$LOG_DIR"
+    info "正在创建临时下载目录: $TMP_DIR"
+    mkdir -p "$TMP_DIR"
 
-generate_reality_keys() {
-    info "正在生成 Reality 密钥对..."
+    info "正在从 sing-box 官方 GitHub 下载完整功能版本 v${SING_BOX_VERSION}..."
+    info "下载可能需要一些时间，请耐心等待..."
     
-    # 使用 sing-box 生成 Reality 密钥对
-    REALITY_OUTPUT=$("$SING_BOX_BIN" generate reality-keypair)
-    if [ $? -ne 0 ]; then
-        error_exit "生成 Reality 密钥对失败。"
+    # 使用更稳定的下载方式
+    if ! curl -L --connect-timeout 30 --max-time 300 -o "$TMP_DIR/sing-box.tar.gz" "$PKG_URL"; then
+        error_exit "下载 sing-box 失败，请检查网络连接。"
     fi
+
+    DOWNLOADED_SIZE=$(stat -f%z "$TMP_DIR/sing-box.tar.gz")
+    info "下载完成，文件大小: $DOWNLOADED_SIZE bytes"
     
-    # 解析输出
-    PRIVATE_KEY=$(echo "$REALITY_OUTPUT" | grep "PrivateKey:" | awk '{print $2}')
-    PUBLIC_KEY=$(echo "$REALITY_OUTPUT" | grep "PublicKey:" | awk '{print $2}')
-    
-    [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ] && error_exit "从密钥对中提取公钥或私钥失败。"
-    
-    info "Reality 密钥对生成成功！"
+    # 检查文件大小（sing-box 压缩包通常大于 5MB）
+    if [ "$DOWNLOADED_SIZE" -lt 5242880 ]; then
+        error_exit "下载的文件大小异常（小于 5MB），可能下载不完整或链接无效。"
+    fi
+
+    info "正在解压 sing-box..."
+    cd "$TMP_DIR" || error_exit "无法进入临时目录。"
+    tar -xzf sing-box.tar.gz || error_exit "解压 sing-box 失败。"
+
+    # 查找 sing-box 二进制文件
+    SING_BOX_EXTRACTED=$(find . -name "sing-box" -type f | head -1)
+    [ -z "$SING_BOX_EXTRACTED" ] && error_exit "在解压的文件中找不到 sing-box 二进制文件。"
+
+    info "正在安装 sing-box 到 $SING_BOX_BIN..."
+    cp "$SING_BOX_EXTRACTED" "$SING_BOX_BIN" || error_exit "复制 sing-box 二进制文件失败。"
+    chmod +x "$SING_BOX_BIN" || error_exit "设置 sing-box 执行权限失败。"
+
+    # 验证安装
+    if ! "$SING_BOX_BIN" version >/dev/null 2>&1; then
+        error_exit "sing-box 安装验证失败。"
+    fi
+
+    INSTALLED_VERSION=$("$SING_BOX_BIN" version 2>/dev/null | head -1)
+    info "sing-box 安装成功！版本: $INSTALLED_VERSION"
+
+    # 清理临时文件
+    cd / && rm -rf "$TMP_DIR"
 }
 
 generate_config() {
-    info "正在生成随机 UUID 和密码..."
-    VLESS_UUID=$("$SING_BOX_BIN" generate uuid)
-    VMESS_UUID=$("$SING_BOX_BIN" generate uuid)
-    HYS_PASS=$(openssl rand -base64 16)
+    info "正在生成安全密钥和 UUID..."
+    VLESS_UUID=$(openssl rand -hex 16 | sed 's/\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)/\1-\2-\3-\4-\5/')
+    VMESS_UUID=$(openssl rand -hex 16 | sed 's/\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\)/\1-\2-\3-\4-\5/')
+    HYS_PASS=$(openssl rand -hex 16)
     
-    # 生成 Reality 密钥对
-    generate_reality_keys
-    
-    # 生成自签名证书
-    generate_certificates
+    info "正在生成 REALITY 密钥对..."
+    KEY_PAIR=$("$SING_BOX_BIN" generate reality-keypair) || error_exit "生成 REALITY 密钥对失败。"
+    PRIVATE_KEY=$(echo "$KEY_PAIR" | awk '/PrivateKey/ {print $2}')
+    PUBLIC_KEY=$(echo "$KEY_PAIR" | awk '/PublicKey/ {print $2}')
+    [ -z "$PRIVATE_KEY" ] || [ -z "$PUBLIC_KEY" ] && error_exit "从密钥对中提取公钥或私钥失败。"
+
+    info "正在生成自签名证书..."
+    openssl req -x509 -nodes -newkey rsa:2048 -keyout "$ETC_DIR/private.key" -out "$ETC_DIR/cert.crt" -days 365 -subj "/CN=www.microsoft.com" || error_exit "生成自签名证书失败。"
 
     info "正在生成 config.json 配置文件..."
     cat > "$CONFIG_FILE" << EOF
@@ -221,11 +188,11 @@ generate_config() {
       ],
       "tls": {
         "enabled": true,
-        "server_name": "${DOMAIN}",
+        "server_name": "www.microsoft.com",
         "reality": {
           "enabled": true,
           "handshake": {
-            "server": "${DOMAIN}",
+            "server": "www.microsoft.com",
             "server_port": 443
           },
           "private_key": "${PRIVATE_KEY}",
@@ -261,9 +228,9 @@ generate_config() {
       ],
       "tls": {
         "enabled": true,
-        "server_name": "${DOMAIN}",
-        "certificate_path": "${CERT_FILE}",
-        "key_path": "${KEY_FILE}"
+        "server_name": "www.microsoft.com",
+        "key_path": "${ETC_DIR}/private.key",
+        "certificate_path": "${ETC_DIR}/cert.crt"
       }
     }
   ],
@@ -299,66 +266,31 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # --- 函数 ---
-info() {
-    printf "${GREEN}[INFO] %s${NC}\n" "$1"
-}
-
-warn() {
-    printf "${YELLOW}[WARN] %s${NC}\n" "$1"
-}
-
-error() {
-    printf "${RED}[ERROR] %s${NC}\n" "$1"
-}
-
 start() {
-    if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
-            warn "sing-box 已经在运行中 (PID: $PID)"
-            return 0
-        else
-            rm -f "$PID_FILE"
-        fi
+    if [ -f "$PID_FILE" ] && ps -p $(cat "$PID_FILE") > /dev/null 2>&1; then
+        printf "${YELLOW}sing-box 已经在运行了。${NC}\n"
+        return
     fi
-    
-    info "正在启动 sing-box 服务..."
+    printf "${GREEN}正在启动 sing-box...${NC}\n"
     nohup "$SING_BOX_BIN" run -c "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     sleep 2
-    
-    if kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        info "sing-box 服务启动成功！"
+    if [ -f "$PID_FILE" ] && ps -p $(cat "$PID_FILE") > /dev/null 2>&1; then
+        printf "${GREEN}sing-box 启动成功！PID: $(cat $PID_FILE)${NC}\n"
     else
-        error "sing-box 服务启动失败，请检查日志。"
-        rm -f "$PID_FILE"
-        return 1
+        printf "${RED}sing-box 启动失败，请查看日志: $LOG_FILE${NC}\n"
     fi
 }
 
 stop() {
     if [ ! -f "$PID_FILE" ]; then
-        warn "sing-box 服务未运行。"
-        return 0
+        printf "${YELLOW}sing-box 没有在运行。${NC}\n"
+        return
     fi
-    
-    PID=$(cat "$PID_FILE")
-    if kill -0 "$PID" 2>/dev/null; then
-        info "正在停止 sing-box 服务..."
-        kill "$PID"
-        sleep 2
-        
-        if kill -0 "$PID" 2>/dev/null; then
-            warn "正常停止失败，强制终止..."
-            kill -9 "$PID"
-        fi
-        
-        rm -f "$PID_FILE"
-        info "sing-box 服务已停止。"
-    else
-        warn "PID 文件存在但进程未运行，清理 PID 文件。"
-        rm -f "$PID_FILE"
-    fi
+    printf "${GREEN}正在停止 sing-box...${NC}\n"
+    kill $(cat "$PID_FILE") 2>/dev/null
+    rm -f "$PID_FILE"
+    printf "${GREEN}sing-box 已停止。${NC}\n"
 }
 
 restart() {
@@ -368,16 +300,10 @@ restart() {
 }
 
 status() {
-    if [ -f "$PID_FILE" ]; then
-        PID=$(cat "$PID_FILE")
-        if kill -0 "$PID" 2>/dev/null; then
-            info "sing-box 服务正在运行 (PID: $PID)"
-        else
-            error "PID 文件存在但进程未运行"
-            rm -f "$PID_FILE"
-        fi
+    if [ -f "$PID_FILE" ] && ps -p $(cat "$PID_FILE") > /dev/null 2>&1; then
+        printf "${GREEN}sing-box 正在运行，PID: $(cat $PID_FILE)${NC}\n"
     else
-        warn "sing-box 服务未运行"
+        printf "${RED}sing-box 未运行。${NC}\n"
     fi
 }
 
@@ -385,61 +311,52 @@ show_log() {
     if [ -f "$LOG_FILE" ]; then
         tail -f "$LOG_FILE"
     else
-        error "日志文件不存在"
+        printf "${RED}日志文件不存在: $LOG_FILE${NC}\n"
     fi
 }
 
 show_links() {
     if [ ! -f "$CONFIG_FILE" ]; then
-        error "配置文件不存在"
-        return 1
+        printf "${RED}配置文件不存在，请重新安装。${NC}\n"
+        return
     fi
     
-    info "节点链接信息："
-    echo "VLESS-Reality: PLACEHOLDER_VLESS_LINK"
-    echo "VMess-WS: PLACEHOLDER_VMESS_LINK"
-    echo "Hysteria2: PLACEHOLDER_HYSTERIA2_LINK"
-    echo ""
-    echo "订阅链接: PLACEHOLDER_SUBSCRIPTION_LINK"
+    printf "${BLUE}=== 节点链接信息 ===${NC}\n\n"
+    printf "${GREEN}PLACEHOLDER_LINKS${NC}\n"
 }
 
 uninstall() {
-    printf "${RED}确定要卸载 sing-box 吗？这将删除所有配置和数据 [y/N]: ${NC}"
+    printf "${YELLOW}确定要卸载 sing-box 吗？这将删除所有配置和数据。(y/n): ${NC}"
     read -r confirm
-    case "$confirm" in
-        [yY]|[yY][eE][sS])
-            stop
-            info "正在卸载 sing-box..."
-            rm -rf "$INSTALL_BASE"
-            rm -f "$MANAGER_SCRIPT_PATH"
-            info "sing-box 已完全卸载。"
-            ;;
-        *)
-            info "取消卸载。"
-            ;;
-    esac
+    if [ "$confirm" = "y" ] || [ "$confirm" = "Y" ]; then
+        stop
+        rm -rf "$INSTALL_BASE"
+        rm -f "$MANAGER_SCRIPT_PATH"
+        printf "${GREEN}sing-box 已完全卸载。${NC}\n"
+    else
+        printf "${YELLOW}取消卸载。${NC}\n"
+    fi
 }
 
 show_menu() {
-    echo ""
-    printf "${BLUE}========== sing-box 管理面板 ==========${NC}\n"
-    echo "1. 启动服务"
-    echo "2. 停止服务"
-    echo "3. 重启服务"
-    echo "4. 查看状态"
-    echo "5. 查看日志"
-    echo "6. 显示链接"
-    echo "7. 卸载"
-    echo "0. 退出"
-    printf "${BLUE}=======================================${NC}\n"
-    printf "请选择操作 [0-7]: "
+    printf "${BLUE}=== sing-box 管理脚本 ===${NC}\n"
+    printf "1. 启动服务\n"
+    printf "2. 停止服务\n"
+    printf "3. 重启服务\n"
+    printf "4. 查看状态\n"
+    printf "5. 查看日志\n"
+    printf "6. 显示链接\n"
+    printf "7. 卸载\n"
+    printf "8. 退出\n"
+    printf "请选择操作 (1-8): "
 }
 
-menu() {
+# --- 主逻辑 ---
+if [ $# -eq 0 ]; then
     while true; do
         show_menu
         read -r choice
-        case "$choice" in
+        case $choice in
             1) start ;;
             2) stop ;;
             3) restart ;;
@@ -447,120 +364,78 @@ menu() {
             5) show_log ;;
             6) show_links ;;
             7) uninstall; break ;;
-            0) break ;;
-            *) error "无效选择，请重新输入。" ;;
+            8) break ;;
+            *) printf "${RED}无效选择，请重新输入。${NC}\n" ;;
         esac
-        echo ""
-        printf "按回车键继续..."
-        read -r
+        printf "\n"
     done
-}
-
-# 主逻辑
-case "$1" in
-    start) start ;;
-    stop) stop ;;
-    restart) restart ;;
-    status) status ;;
-    log) show_log ;;
-    links) show_links ;;
-    uninstall) uninstall ;;
-    menu|*) menu ;;
-esac
+else
+    case $1 in
+        start) start ;;
+        stop) stop ;;
+        restart) restart ;;
+        status) status ;;
+        log) show_log ;;
+        links) show_links ;;
+        uninstall) uninstall ;;
+        *) printf "${RED}用法: $0 {start|stop|restart|status|log|links|uninstall}${NC}\n" ;;
+    esac
+fi
 SCRIPT_EOF
 
     chmod +x "$MANAGER_SCRIPT_PATH"
-    
-    # 替换占位符
-    replace_placeholders_in_manager
-    
     info "管理脚本创建成功！"
 }
 
-replace_placeholders_in_manager() {
+replace_placeholders() {
     info "正在替换管理脚本中的占位符..."
     
-    # 从配置文件中提取信息
-    VLESS_UUID=$(grep -A 10 '"type": "vless"' "$CONFIG_FILE" | grep '"uuid":' | sed 's/.*"uuid": "\([^"]*\)".*/\1/')
-    VMESS_UUID=$(grep -A 10 '"type": "vmess"' "$CONFIG_FILE" | grep '"uuid":' | sed 's/.*"uuid": "\([^"]*\)".*/\1/')
-    HYS_PASS=$(grep -A 10 '"type": "hysteria2"' "$CONFIG_FILE" | grep '"password":' | sed 's/.*"password": "\([^"]*\)".*/\1/')
+    # 生成节点链接
+    VLESS_LINK="vless://${VLESS_UUID}@${SERVER_ADDR}:${VLESS_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.microsoft.com&fp=chrome&pbk=${PUBLIC_KEY}&type=tcp#VLESS-REALITY"
+    VMESS_LINK="vmess://$(echo '{"v":"2","ps":"VMess-WS","add":"'${SERVER_ADDR}'","port":"'${VMESS_PORT}'","id":"'${VMESS_UUID}'","aid":"0","net":"ws","type":"none","host":"","path":"/vmess","tls":""}' | base64 -w 0)"
+    HYSTERIA2_LINK="hysteria2://${HYS_PASS}@${SERVER_ADDR}:${HYSTERIA2_PORT}?insecure=1&sni=www.microsoft.com#Hysteria2"
     
-    # 生成链接
-    VLESS_LINK="vless://${VLESS_UUID}@${PUBLIC_IP}:${VLESS_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${DOMAIN}&fp=chrome&pbk=${PUBLIC_KEY}&type=tcp#VLESS-Reality"
-    VMESS_LINK="vmess://$(echo "{\"v\":\"2\",\"ps\":\"VMess-WS\",\"add\":\"${PUBLIC_IP}\",\"port\":\"${VMESS_PORT}\",\"id\":\"${VMESS_UUID}\",\"aid\":\"0\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/vmess\",\"tls\":\"\"}" | base64 -w 0)"
-    HYSTERIA2_LINK="hysteria2://${HYS_PASS}@${PUBLIC_IP}:${HYSTERIA2_PORT}?insecure=1&sni=${DOMAIN}#Hysteria2"
+    LINKS_TEXT="${BLUE}VLESS + REALITY:${NC}\n${VLESS_LINK}\n\n${BLUE}VMess + WebSocket:${NC}\n${VMESS_LINK}\n\n${BLUE}Hysteria2:${NC}\n${HYSTERIA2_LINK}\n\n${BLUE}订阅链接:${NC}\ndata:text/plain;base64,$(echo "${VLESS_LINK}\n${VMESS_LINK}\n${HYSTERIA2_LINK}" | base64 -w 0)"
     
-    # 生成订阅链接（base64编码的节点列表）
-    SUBSCRIPTION_CONTENT="${VLESS_LINK}\n${VMESS_LINK}\n${HYSTERIA2_LINK}"
-    SUBSCRIPTION_LINK="data:text/plain;base64,$(echo -e "$SUBSCRIPTION_CONTENT" | base64 -w 0)"
-    
-    # 替换占位符
-    sed -i "" "s|PLACEHOLDER_VLESS_LINK|$VLESS_LINK|g" "$MANAGER_SCRIPT_PATH"
-    sed -i "" "s|PLACEHOLDER_VMESS_LINK|$VMESS_LINK|g" "$MANAGER_SCRIPT_PATH"
-    sed -i "" "s|PLACEHOLDER_HYSTERIA2_LINK|$HYSTERIA2_LINK|g" "$MANAGER_SCRIPT_PATH"
-    sed -i "" "s|PLACEHOLDER_SUBSCRIPTION_LINK|$SUBSCRIPTION_LINK|g" "$MANAGER_SCRIPT_PATH"
+    # 替换占位符（FreeBSD 兼容的 sed 语法）
+    sed -i '' "s|PLACEHOLDER_LINKS|${LINKS_TEXT}|g" "$MANAGER_SCRIPT_PATH"
 }
 
 start_service() {
     info "正在启动 sing-box 服务..."
-    nohup "$SING_BOX_BIN" run -c "$CONFIG_FILE" > "$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
-    sleep 2
-    
-    if kill -0 $(cat "$PID_FILE") 2>/dev/null; then
-        info "sing-box 服务启动成功！"
-    else
-        error_exit "sing-box 服务启动失败，请检查配置文件和日志。"
-    fi
+    "$MANAGER_SCRIPT_PATH" start
 }
 
 show_final_info() {
-    info "安装完成！正在显示节点信息..."
-    echo ""
-    printf "${BLUE}========== 节点信息 ==========${NC}\n"
-    echo "VLESS-Reality: vless://${VLESS_UUID}@${PUBLIC_IP}:${VLESS_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${DOMAIN}&fp=chrome&pbk=${PUBLIC_KEY}&type=tcp#VLESS-Reality"
-    echo ""
-    echo "VMess-WS: vmess://$(echo "{\"v\":\"2\",\"ps\":\"VMess-WS\",\"add\":\"${PUBLIC_IP}\",\"port\":\"${VMESS_PORT}\",\"id\":\"${VMESS_UUID}\",\"aid\":\"0\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/vmess\",\"tls\":\"\"}" | base64 -w 0)"
-    echo ""
-    echo "Hysteria2: hysteria2://${HYS_PASS}@${PUBLIC_IP}:${HYSTERIA2_PORT}?insecure=1&sni=${DOMAIN}#Hysteria2"
-    echo ""
-    printf "${BLUE}========== 管理命令 ==========${NC}\n"
-    echo "启动服务: $MANAGER_SCRIPT_PATH start"
-    echo "停止服务: $MANAGER_SCRIPT_PATH stop"
-    echo "查看状态: $MANAGER_SCRIPT_PATH status"
-    echo "管理面板: $MANAGER_SCRIPT_PATH menu"
-    echo ""
-    printf "${GREEN}安装完成！请保存好上述节点信息。${NC}\n"
+    printf "\n${GREEN}=== 安装完成！ ===${NC}\n\n"
+    printf "${BLUE}管理脚本位置:${NC} $MANAGER_SCRIPT_PATH\n"
+    printf "${BLUE}配置文件位置:${NC} $CONFIG_FILE\n"
+    printf "${BLUE}日志文件位置:${NC} $LOG_FILE\n\n"
+    
+    printf "${BLUE}常用命令:${NC}\n"
+    printf "  启动服务: ./sbx.sh start\n"
+    printf "  停止服务: ./sbx.sh stop\n"
+    printf "  查看状态: ./sbx.sh status\n"
+    printf "  查看日志: ./sbx.sh log\n"
+    printf "  显示链接: ./sbx.sh links\n"
+    printf "  交互菜单: ./sbx.sh\n\n"
+    
+    printf "${BLUE}节点链接信息:${NC}\n"
+    "$MANAGER_SCRIPT_PATH" links
 }
 
 # --- 主程序 ---
-info "开始 FreeBSD sing-box 一键安装脚本..."
+main() {
+    info "开始安装 sing-box..."
+    check_dependencies
+    cleanup_old_install
+    get_user_config
+    install_sing_box
+    generate_config
+    create_manager_script
+    replace_placeholders
+    start_service
+    show_final_info
+}
 
-# 检查系统依赖
-check_dependencies
-
-# 获取公网 IP
-get_public_ip
-
-# 获取用户配置
-get_user_config
-
-# 清理旧版本
-cleanup_old_installation
-
-# 设置 sing-box 环境
-setup_sing_box
-
-# 生成配置文件
-generate_config
-
-# 创建管理脚本
-create_manager_script
-
-# 启动服务
-start_service
-
-# 显示最终信息
-show_final_info
-
-info "脚本执行完成！"
+main "$@"
