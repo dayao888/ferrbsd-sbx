@@ -1,21 +1,15 @@
-MIT License
+#Modified License Agreement
 
 Copyright (c) 2024 FreeBSD Proxy Script
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+For research use only, prohibited for commercial or other unauthorized purposes.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+##License Terms
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+1. This software and related documentation are for research and learning purposes only.
+2. It is prohibited to copy, modify, merge, publish, distribute, sublicense or sell this software and its copies.
+3. It is prohibited to use this software for any commercial or unauthorized purposes.
+
+Disclaimers
+
+This software is provided "as is" without any express or implied warranties, including but not limited to merchantability, fitness for a particular purpose, and non infringement. Under no circumstances shall the author or copyright holder be liable for any claims, damages, or other liabilities arising from the use of this software or any actions related to this software, whether due to contract disputes, infringement, or other reasons.
