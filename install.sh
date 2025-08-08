@@ -15,7 +15,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # --- 全局变量 ---
-PKG_URL="http://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/sing-box-1.11.9.pkg"
+# 使用 sing-box 官方 GitHub 发布版本（包含完整功能）
+SING_BOX_VERSION="1.8.10"
+PKG_URL="https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/sing-box-${SING_BOX_VERSION}-freebsd-amd64.tar.gz"
 INSTALL_BASE="$HOME/.sbx"
 BIN_DIR="$INSTALL_BASE/bin"
 ETC_DIR="$INSTALL_BASE/etc"
@@ -105,20 +107,20 @@ install_sing_box() {
     info "正在创建临时下载目录: $TMP_DIR"
     mkdir -p "$TMP_DIR"
 
-    info "正在从 FreeBSD 官方源下载 sing-box 核心包..."
+    info "正在从 sing-box 官方 GitHub 下载完整功能版本..."
     info "下载可能需要一些时间，请耐心等待..."
-    curl -L -o "$TMP_DIR/sing-box.pkg" "$PKG_URL" || error_exit "下载 sing-box 核心失败。"
+    curl -L -o "$TMP_DIR/sing-box.tar.gz" "$PKG_URL" || error_exit "下载 sing-box 失败。"
 
-    DOWNLOADED_SIZE=$(stat -f%z "$TMP_DIR/sing-box.pkg")
-    info "下载完成，正在解压核心包 (文件大小: $DOWNLOADED_SIZE bytes)..."
+    DOWNLOADED_SIZE=$(stat -f%z "$TMP_DIR/sing-box.tar.gz")
+    info "下载完成，正在解压 (文件大小: $DOWNLOADED_SIZE bytes)..."
     
-    if [ "$DOWNLOADED_SIZE" -lt 102400 ]; then
-        error_exit "下载的 sing-box.pkg 文件大小异常，请检查网络或链接有效性。"
+    if [ "$DOWNLOADED_SIZE" -lt 1024000 ]; then
+        error_exit "下载的文件大小异常，请检查网络或链接有效性。"
     fi
 
-    # 解压 .pkg 文件并提取 sing-box 二进制文件
+    # 解压文件
     cd "$TMP_DIR" || error_exit "无法进入临时目录"
-    tar -xf "sing-box.pkg" || error_exit "解压核心包失败。"
+    tar -xzf "sing-box.tar.gz" || error_exit "解压失败。"
 
     info "正在安装 sing-box 二进制文件..."
     # 查找 sing-box 二进制文件
@@ -127,7 +129,7 @@ install_sing_box() {
         cp "$SING_BOX_PATH" "$SING_BOX_BIN"
         chmod +x "$SING_BOX_BIN"
     else
-        error_exit "在 .pkg 文件中未找到 sing-box 二进制文件。"
+        error_exit "在下载的文件中未找到 sing-box 二进制文件。"
     fi
 
     info "正在清理临时文件..."
