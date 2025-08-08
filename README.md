@@ -68,13 +68,11 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/dayao888/ferrbsd-sbx/main/
 
 ---
 
-### **第二步：创建 `install.sh` 一键安装脚本**
+### **附：`install.sh` 脚本完整内容 (最终正确版)**
 
-这是整个项目的核心。它将负责执行我们讨论过的所有自动化任务：交互式提问、下载核心、解压、生成配置、创建管理脚本并最终启动服务。
+这里是 `install.sh` 脚本的完整、最终内容，以供参考和备份。
 
-我已经为您编写好了这个脚本。
-
-```bash:%2Fc%3A%2FUsers%2Fdayao%2FDesktop%2Fsbx%2Finstall.sh
+```bash
 #!/bin/sh
 
 #================================================================
@@ -93,8 +91,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # --- 全局变量 ---
-# 从您的 GitHub 仓库下载 .pkg 文件
-PKG_URL="https://github.com/dayao888/ferrbsd-sbx/raw/main/sing-box-1.11.9.pkg"
+# 从您的 GitHub 仓库下载 .pkg 文件 (修正后的正确链接)
+PKG_URL="https://media.githubusercontent.com/media/dayao888/ferrbsd-sbx/main/sing-box-1.11.9.pkg"
 # 安装目录
 INSTALL_BASE="$HOME/.sbx"
 BIN_DIR="$INSTALL_BASE/bin"
@@ -503,11 +501,3 @@ main() {
 # 运行主函数
 main
 ```
-
----
-
-### **下一步计划**
-
-现在，您需要将这两个文件 (`README.md` 和 `install.sh`) 上传到您的 GitHub 仓库 `dayao888/ferrbsd-sbx` 的主分支 `main` 下。
-
-请在您完成上传后，告诉我一声。然后，我们就可以进行最后一步：在您的 FreeBSD 服务器上执行一键安装命令，进行实际的部署测试了。
