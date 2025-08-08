@@ -1,80 +1,3 @@
-# FreeBSD (非 root) sing-box 一键部署脚本
-
-## 声明
-本项目旨在提供一个自动化工具，方便在 **FreeBSD** 系统上为 **非 root 用户** 快速部署 `sing-box` 服务。所有生成的节点仅供个人学习和研究网络技术使用，请遵守您所在地区和服务器所在地区的法律法规。
-
-**IP 安全性**: 本脚本配置的 **VLESS + REALITY** 协议，通过伪装流量为访问常规网站（如 `www.microsoft.com`），极大地提高了连接的安全性与隐蔽性，能有效防止 IP 被探测和封锁。
-
----
-
-## ✨ 项目特⾊
-
-- **专为非 root 用户设计**: 无需 `sudo` 或 `root` 权限，所有文件和进程均在用户主目录 (`$HOME`) 下运行，干净无污染。
-- **全交互式安装**: 通过简单的问答形式，引导您完成域名、端口等关键信息的配置。
-- **多协议支持**: 一次性部署三种主流高效协议，满足不同网络环境下的需求：
-    1.  **VLESS + REALITY**: 安全性与伪装性极佳，推荐首选。
-    2.  **VMess + WebSocket**: 兼容性好，连接稳定。
-    3.  **Hysteria 2**: 高速暴力发包协议，适合网络环境好的情况。
-- **自动化安全配置**: UUID、密钥、密码等敏感信息均在安装时自动随机生成，保障每个部署的独特性和安全性。
-- **便捷的命令行管理面板**: 提供一个简单的管理脚本 `sbx.sh`，轻松完成启动、停止、重启、卸载、查看日志和链接等操作。
-- **订阅链接生成**: 自动生成聚合了所有节点的订阅链接，方便一键导入各类客户端。
-
----
-
-## 🚀 快速开始
-
-### 准备工作
-
-1.  一台运行 FreeBSD 14.3+ (amd64) 的服务器。
-2.  一个普通的（非 root）用户账户。
-3.  在您的服务器防火墙或云服务商安全组中，提前规划并**开放三个端口** (TCP/UDP)。
-4.  (可选) 准备一个域名，并将其解析到您的服务器 IP 地址。
-
-### 一键安装
-
-通过 SSH 登录您的 FreeBSD 服务器，然后执行以下命令：
-
-```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/dayao888/ferrbsd-sbx/main/install.sh)"
-```
-*注意：请将上面的 `dayao888/ferrbsd-sbx` 替换为您自己的 GitHub 用户名和仓库名。*
-
-脚本将会引导您完成后续的配置。安装成功后，屏幕上会直接显示节点链接和订阅链接。
-
----
-
-## 🛠️ 管理脚本用法
-
-脚本安装成功后，会在您当前目录下生成一个管理脚本 `sbx.sh`。
-
-**使用方法:**
-
-```bash
-# 显示管理菜单 (推荐)
-./sbx.sh menu
-
-# 直接使用命令
-./sbx.sh [命令]
-
-# 例如:
-./sbx.sh start    # 启动服务
-./sbx.sh stop     # 停止服务
-./sbx.sh restart  # 重启服务
-./sbx.sh status   # 查看运行状态
-./sbx.sh log      # 查看实时日志
-./sbx.sh links    # 重新显示节点和订阅链接
-./sbx.sh uninstall # 卸载
-```
-
----
-
-### **第二步：创建 `install.sh` 一键安装脚本**
-
-这是整个项目的核心。它将负责执行我们讨论过的所有自动化任务：交互式提问、下载核心、解压、生成配置、创建管理脚本并最终启动服务。
-
-我已经为您编写好了这个脚本。
-
-```bash:%2Fc%3A%2FUsers%2Fdayao%2FDesktop%2Fsbx%2Finstall.sh
 #!/bin/sh
 
 #================================================================
@@ -93,8 +16,8 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # --- 全局变量 ---
-# 从您的 GitHub 仓库下载 .pkg 文件
-PKG_URL="https://github.com/dayao888/ferrbsd-sbx/raw/main/sing-box-1.11.9.pkg"
+# 从您的 GitHub 仓库下载 .pkg 文件 (使用正确的 LFS 原始链接)
+PKG_URL="https://media.githubusercontent.com/media/dayao888/ferrbsd-sbx/main/sing-box-1.11.9.pkg"
 # 安装目录
 INSTALL_BASE="$HOME/.sbx"
 BIN_DIR="$INSTALL_BASE/bin"
@@ -228,7 +151,7 @@ generate_config() {
     HYS_PASS=$(openssl rand -hex 16)
     
     # 生成 REALITY 密钥对
-    KEY_PAIR=$( "$SING_BOX_BIN" generate reality-keypair )
+    KEY_PAIR=$("$SING_BOX_BIN" generate reality-keypair)
     PRIVATE_KEY=$(echo "$KEY_PAIR" | awk '/PrivateKey/ {print $2}')
     PUBLIC_KEY=$(echo "$KEY_PAIR" | awk '/PublicKey/ {print $2}')
 
@@ -502,12 +425,3 @@ main() {
 
 # 运行主函数
 main
-```
-
----
-
-### **下一步计划**
-
-现在，您需要将这两个文件 (`README.md` 和 `install.sh`) 上传到您的 GitHub 仓库 `dayao888/ferrbsd-sbx` 的主分支 `main` 下。
-
-请在您完成上传后，告诉我一声。然后，我们就可以进行最后一步：在您的 FreeBSD 服务器上执行一键安装命令，进行实际的部署测试了。
