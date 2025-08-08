@@ -15,15 +15,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # --- 全局变量 ---
-# 使用 FreeBSD 官方包源
-SING_BOX_VERSION="1.11.9"
-PKG_URL="http://pkg.freebsd.org/FreeBSD:14:amd64/latest/All/sing-box-${SING_BOX_VERSION}.pkg"
+# 使用系统已安装的 sing-box
+SYSTEM_SING_BOX="/usr/local/bin/sing-box"
 INSTALL_BASE="$HOME/.sbx"
 BIN_DIR="$INSTALL_BASE/bin"
 ETC_DIR="$INSTALL_BASE/etc"
 LOG_DIR="$INSTALL_BASE/log"
 CERT_DIR="$INSTALL_BASE/certs"
-TMP_DIR="/tmp/sbx_install_$$"
 
 SING_BOX_BIN="$BIN_DIR/sing-box"
 CONFIG_FILE="$ETC_DIR/config.json"
@@ -47,7 +45,6 @@ warn() {
 
 error_exit() {
     printf "${RED}[ERROR] %s${NC}\n" "$1"
-    [ -d "$TMP_DIR" ] && rm -rf "$TMP_DIR"
     exit 1
 }
 
@@ -59,11 +56,16 @@ check_dependencies() {
     info "正在检查系统依赖..."
     
     # 检查必需的命令
-    for cmd in curl tar openssl; do
+    for cmd in curl openssl; do
         if ! command_exists "$cmd"; then
             error_exit "缺少必需的命令: $cmd，请先安装。"
         fi
     done
+    
+    # 检查 sing-box 是否已安装
+    if [ ! -f "$SYSTEM_SING_BOX" ]; then
+        error_exit "系统中未找到 sing-box，请先运行: pkg install sing-box"
+    fi
     
     info "系统依赖检查完成。"
 }
@@ -143,51 +145,17 @@ cleanup_old_installation() {
     info "旧版本清理完成。"
 }
 
-install_sing_box() {
-    info "正在创建安装目录..."
+setup_sing_box() {
+    info "正在设置 sing-box 环境..."
     mkdir -p "$BIN_DIR" "$ETC_DIR" "$LOG_DIR" "$CERT_DIR"
-    info "正在创建临时下载目录: $TMP_DIR"
-    mkdir -p "$TMP_DIR"
-
-    info "正在从 FreeBSD 官方源下载 sing-box 核心包..."
-    info "下载可能需要一些时间，请耐心等待..."
-    curl -L -o "$TMP_DIR/sing-box.pkg" "$PKG_URL" || error_exit "下载 sing-box 失败。"
-
-    DOWNLOADED_SIZE=$(stat -f%z "$TMP_DIR/sing-box.pkg")
-    info "下载完成，正在解压 (文件大小: $DOWNLOADED_SIZE bytes)..."
     
-    if [ "$DOWNLOADED_SIZE" -lt 1024000 ]; then
-        error_exit "下载的文件大小异常，请检查网络或链接有效性。"
-    fi
-
-    # 解压 FreeBSD pkg 文件
-    cd "$TMP_DIR" || error_exit "无法进入临时目录"
-    
-    # FreeBSD pkg 文件是 tar 格式，需要先解压外层
-    tar -xf "sing-box.pkg" || error_exit "解压 pkg 文件失败。"
-    
-    # 查找并解压内部的数据文件
-    if [ -f "data.tar.xz" ]; then
-        tar -xf "data.tar.xz" || error_exit "解压数据文件失败。"
-    elif [ -f "data.tar.gz" ]; then
-        tar -xzf "data.tar.gz" || error_exit "解压数据文件失败。"
+    # 创建 sing-box 的符号链接到用户目录
+    if [ -f "$SYSTEM_SING_BOX" ]; then
+        ln -sf "$SYSTEM_SING_BOX" "$SING_BOX_BIN"
+        info "sing-box 环境设置成功！"
     else
-        error_exit "在 pkg 文件中未找到数据文件。"
+        error_exit "系统中的 sing-box 不存在，请检查安装。"
     fi
-
-    info "正在安装 sing-box 二进制文件..."
-    # 查找 sing-box 二进制文件（通常在 usr/local/bin/ 目录下）
-    SING_BOX_PATH=$(find "$TMP_DIR" -name "sing-box" -type f | head -1)
-    if [ -n "$SING_BOX_PATH" ]; then
-        cp "$SING_BOX_PATH" "$SING_BOX_BIN"
-        chmod +x "$SING_BOX_BIN"
-    else
-        error_exit "在下载的文件中未找到 sing-box 二进制文件。"
-    fi
-
-    info "正在清理临时文件..."
-    rm -rf "$TMP_DIR"
-    info "sing-box 核心安装成功！"
 }
 
 generate_certificates() {
@@ -427,8 +395,6 @@ show_links() {
         return 1
     fi
     
-    # 这里需要解析配置文件并生成链接
-    # 由于是占位符，实际实现时需要根据配置文件内容生成
     info "节点链接信息："
     echo "VLESS-Reality: PLACEHOLDER_VLESS_LINK"
     echo "VMess-WS: PLACEHOLDER_VMESS_LINK"
@@ -529,10 +495,10 @@ replace_placeholders_in_manager() {
     SUBSCRIPTION_LINK="data:text/plain;base64,$(echo -e "$SUBSCRIPTION_CONTENT" | base64 -w 0)"
     
     # 替换占位符
-    sed -i "s|PLACEHOLDER_VLESS_LINK|$VLESS_LINK|g" "$MANAGER_SCRIPT_PATH"
-    sed -i "s|PLACEHOLDER_VMESS_LINK|$VMESS_LINK|g" "$MANAGER_SCRIPT_PATH"
-    sed -i "s|PLACEHOLDER_HYSTERIA2_LINK|$HYSTERIA2_LINK|g" "$MANAGER_SCRIPT_PATH"
-    sed -i "s|PLACEHOLDER_SUBSCRIPTION_LINK|$SUBSCRIPTION_LINK|g" "$MANAGER_SCRIPT_PATH"
+    sed -i "" "s|PLACEHOLDER_VLESS_LINK|$VLESS_LINK|g" "$MANAGER_SCRIPT_PATH"
+    sed -i "" "s|PLACEHOLDER_VMESS_LINK|$VMESS_LINK|g" "$MANAGER_SCRIPT_PATH"
+    sed -i "" "s|PLACEHOLDER_HYSTERIA2_LINK|$HYSTERIA2_LINK|g" "$MANAGER_SCRIPT_PATH"
+    sed -i "" "s|PLACEHOLDER_SUBSCRIPTION_LINK|$SUBSCRIPTION_LINK|g" "$MANAGER_SCRIPT_PATH"
 }
 
 start_service() {
@@ -582,8 +548,8 @@ get_user_config
 # 清理旧版本
 cleanup_old_installation
 
-# 安装 sing-box
-install_sing_box
+# 设置 sing-box 环境
+setup_sing_box
 
 # 生成配置文件
 generate_config
