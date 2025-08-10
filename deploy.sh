@@ -157,19 +157,12 @@ get_server_ip() {
         yellow "请查看可用网络接口："
         ifconfig 2>/dev/null | grep -E "^[a-z]|inet " || echo "无法获取接口信息"
         echo
+        read -p "请手动输入服务器IP: " SERVER_IP
         
-        # 如果是通过管道执行，设置默认IP
-        if [[ ! -t 0 ]]; then
-            SERVER_IP="YOUR_SERVER_IP"
-            yellow "⚠ 非交互模式：请手动修改配置中的服务器IP"
-        else
-            read -p "请手动输入服务器IP: " SERVER_IP < /dev/tty
-        
-            # Validate IP format
-            if [[ ! "$SERVER_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-                red "IP地址格式无效"
-                exit 1
-            fi
+        # Validate IP format
+        if [[ ! "$SERVER_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            red "IP地址格式无效"
+            exit 1
         fi
     fi
     
@@ -563,419 +556,370 @@ configure_firewall() {
 pass in quick on any proto tcp from any to any port $REALITY_PORT
 pass in quick on any proto tcp from any to any port $VISION_PORT  
 pass in quick on any proto tcp from any to any port $GRPC_PORT
-pass out quick on any proto tcp from any to any port 443
-pass out quick on any proto tcp from any to any port 80
-pass out quick on any proto udp from any to any port 53"
-    
-    # Backup pf.conf
-    sudo cp /etc/pf.conf /etc/pf.conf.backup."$(date +%s)" 2>/dev/null || true
+pass out quick on any proto tcp from any to any
+pass out quick on any proto udp from any to any
+"
     
     # Check if rules already exist
-    if ! grep -q "# Sing-box rules" /etc/pf.conf 2>/dev/null; then
+    if ! sudo grep -q "Sing-box rules" /etc/pf.conf 2>/dev/null; then
         echo "$pf_rules" | sudo tee -a /etc/pf.conf > /dev/null
-        sudo pfctl -f /etc/pf.conf 2>/dev/null || {
-            yellow "警告：防火墙规则加载失败，可能需要手动配置"
-        }
-        green "✓ 防火墙配置完成"
+        sudo pfctl -f /etc/pf.conf
+        green "✓ 防火墙规则已添加"
     else
-        green "✓ 防火墙规则已存在"
+        yellow "防火墙规则已存在，跳过"
     fi
 }
 
-# Start services
-start_services() {
-    blue "正在启动 sing-box 服务..."
+# Start sing-box
+start_singbox() {
+    blue "正在启动 sing-box..."
     
-    # Stop existing service if running
-    if pgrep -f "sb-" > /dev/null; then
-        pkill -f "sb-"
-        sleep 2
-    fi
+    # Kill existing process
+    pkill -f "sb-amd64" 2>/dev/null || true
     
-    # Start sing-box with nohup
-    nohup ./sb-amd64 run -c config.json > sing-box.log 2>&1 &
+    # Start in background
+    nohup ./sb-amd64 run -c config.json > singbox.log 2>&1 &
     
-    # Wait and check if started successfully
     sleep 3
-    if pgrep -f "sb-" > /dev/null; then
-        green "✓ sing-box 服务已启动"
-        blue "  日志文件: $BASE_PATH/sing-box.log"
+    
+    # Check if started successfully
+    if pgrep -f "sb-amd64" > /dev/null; then
+        green "✓ sing-box 启动成功"
     else
-        red "sing-box 启动失败，请检查日志文件"
-        tail -n 20 sing-box.log 2>/dev/null || echo "无法读取日志文件"
+        red "sing-box 启动失败，请检查日志:"
+        tail -20 singbox.log
         exit 1
     fi
 }
 
-# Generate subscription links
+# Generate subscription info
 generate_subscription() {
-    blue "正在生成订阅链接..."
+    local reality_config vision_config grpc_config
     
-    cat > subscription.txt << EOF
-科学上网节点信息
-==================
-
-VLESS Reality协议:
-vless://$UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=&type=tcp&headerType=none#FreeBSD-Reality
-
-VLESS Vision协议:
-vless://$UUID@$SERVER_IP:$VISION_PORT?encryption=none&flow=xtls-rprx-vision&security=tls&sni=$DOMAIN&type=tcp&headerType=none#FreeBSD-Vision
-
-VLESS GRPC协议:
-vless://$UUID@$SERVER_IP:$GRPC_PORT?encryption=none&flow=&security=tls&sni=$DOMAIN&type=grpc&serviceName=grpc&mode=gun#FreeBSD-GRPC
-
-==================
-配置说明：
-服务器地址: $SERVER_IP
-UUID: $UUID
-Reality端口: $REALITY_PORT
-Vision端口: $VISION_PORT
-GRPC端口: $GRPC_PORT
-伪装域名: $DOMAIN
-Reality公钥: $PUBLIC_KEY
-==================
+    # Reality config
+    reality_config="vless://$UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=&type=tcp&headerType=none#Reality-$SERVER_IP"
+    
+    # Vision config  
+    vision_config="vless://$UUID@$SERVER_IP:$VISION_PORT?encryption=none&flow=xtls-rprx-vision&security=tls&sni=$DOMAIN&type=tcp&headerType=none#Vision-$SERVER_IP"
+    
+    # GRPC config
+    grpc_config="vless://$UUID@$SERVER_IP:$GRPC_PORT?encryption=none&flow=&security=tls&sni=$DOMAIN&type=grpc&serviceName=grpc&mode=gun#GRPC-$SERVER_IP"
+    
+    # Save to file
+    cat > links.txt << EOF
+$reality_config
+$vision_config  
+$grpc_config
 EOF
     
-    green "✓ 订阅文件已生成: $BASE_PATH/subscription.txt"
+    # Generate base64 subscription
+    base64 links.txt > subscription.txt
+    
+    green "✓ 订阅信息已生成"
+    green "  链接文件: $BASE_PATH/links.txt"
+    green "  订阅文件: $BASE_PATH/subscription.txt"
+    
+    echo
+    blue "=== 分享链接 ==="
+    echo "Reality: $reality_config"
+    echo "Vision: $vision_config"
+    echo "GRPC: $grpc_config"
 }
 
 # Create management tools
 create_management_tools() {
-    blue "正在创建管理工具..."
-
-    # Create main management script
-    cat > SB << 'EOF'
-#!/bin/bash
-
-BASE_PATH="$HOME/sbx"
-cd "$BASE_PATH" || exit 1
-
-# Color functions
-red() { echo -e "\033[31m$*\033[0m"; }
-green() { echo -e "\033[32m$*\033[0m"; }
-yellow() { echo -e "\033[33m$*\033[0m"; }
-blue() { echo -e "\033[34m$*\033[0m"; }
-
-show_menu() {
-    clear
-    blue "=================================="
-    blue "    FreeBSD Sing-box 管理面板"
-    blue "=================================="
-    echo
-    green "1. 启动 sing-box"
-    green "2. 停止 sing-box"
-    green "3. 重启 sing-box"
-    green "4. 查看状态"
-    green "5. 实时日志"
-    green "6. 更新地理规则"
-    green "7. 生成订阅"
-    green "8. 卸载"
-    red "0. 退出"
-    echo
-}
-
-start_singbox() {
-    if pgrep -f "sb-" > /dev/null; then
-        yellow "sing-box 已在运行"
-        return
-    fi
-    
-    blue "正在启动 sing-box..."
-    nohup ./sb-amd64 run -c config.json > sing-box.log 2>&1 &
-    sleep 2
-    
-    if pgrep -f "sb-" > /dev/null; then
-        green "✓ sing-box 启动成功"
-    else
-        red "✗ sing-box 启动失败"
-        echo "最近日志："
-        tail -n 10 sing-box.log 2>/dev/null
-    fi
-}
-
-stop_singbox() {
-    if ! pgrep -f "sb-" > /dev/null; then
-        yellow "sing-box 未运行"
-        return
-    fi
-    
-    blue "正在停止 sing-box..."
-    pkill -f "sb-"
-    sleep 2
-    
-    if ! pgrep -f "sb-" > /dev/null; then
-        green "✓ sing-box 已停止"
-    else
-        red "✗ 停止失败，强制终止"
-        pkill -9 -f "sb-"
-    fi
-}
-
-restart_singbox() {
-    stop_singbox
-    sleep 1
-    start_singbox
-}
-
-show_status() {
-    if pgrep -f "sb-" > /dev/null; then
-        green "状态：运行中"
-        echo "进程信息："
-        ps aux | grep "[s]b-" || echo "无法获取进程信息"
-    else
-        red "状态：未运行"
-    fi
-    
-    echo
-    echo "端口监听状态："
-    netstat -an | grep -E ":$(grep listen_port config.json | head -3 | grep -o '[0-9]\+' | tr '\n' '|' | sed 's/|$//')" || echo "无监听端口"
-}
-
-show_logs() {
-    blue "实时日志 (按 Ctrl+C 退出)："
-    echo
-    tail -f sing-box.log 2>/dev/null || {
-        red "无法读取日志文件"
-        return
-    }
-}
-
-update_rules() {
-    if [[ -f "update_rules.sh" ]]; then
-        ./update_rules.sh
-    else
-        blue "正在更新地理规则..."
-        stop_singbox
-        rm -rf *.srs 2>/dev/null
-        start_singbox
-        green "✓ 规则文件已清理，将在下次连接时重新下载"
-    fi
-}
-
-generate_subscription() {
-    if [[ -f "subscription.sh" ]]; then
-        ./subscription.sh
-    else
-        if [[ -f "subscription.txt" ]]; then
-            green "订阅信息："
-            cat subscription.txt
-        else
-            red "订阅文件不存在"
-        fi
-    fi
-}
-
-uninstall() {
-    read -p "确定要卸载吗？[y/N]: " confirm
-    if [[ "$confirm" =~ ^[yY] ]]; then
-        stop_singbox
-        cd "$HOME" || exit 1
-        rm -rf "$BASE_PATH"
-        green "✓ 卸载完成"
-        exit 0
-    fi
-}
-
-# Handle command line arguments
-case "${1:-}" in
-    --start)
-        start_singbox
-        exit 0
-        ;;
-    --stop)
-        stop_singbox  
-        exit 0
-        ;;
-    --restart)
-        restart_singbox
-        exit 0
-        ;;
-    --status)
-        show_status
-        exit 0
-        ;;
-    --logs)
-        show_logs
-        exit 0
-        ;;
-esac
-
-# Interactive menu
-while true; do
-    show_menu
-    read -p "请选择操作 [0-8]: " choice
-    
-    case $choice in
-        1) start_singbox ;;
-        2) stop_singbox ;;
-        3) restart_singbox ;;
-        4) show_status ;;
-        5) show_logs ;;
-        6) update_rules ;;
-        7) generate_subscription ;;
-        8) uninstall ;;
-        0) exit 0 ;;
-        *) red "无效选择" ;;
-    esac
-    
-    read -p "按 Enter 继续..."
-done
-EOF
-
-    # Create individual management scripts
+    # Status check script
     cat > check_status.sh << 'EOF'
 #!/bin/bash
-cd "$HOME/sbx" || exit 1
+cd "$(dirname "$0")"
 
-if pgrep -f "sb-" > /dev/null; then
-    echo "✓ sing-box 运行中"
-    ps aux | grep "[s]b-"
+echo "=== Sing-box 状态 ==="
+if pgrep -f "sb-amd64" > /dev/null; then
+    echo "状态: 运行中"
+    echo "进程ID: $(pgrep -f 'sb-amd64')"
+    echo "端口监听:"
+    sockstat -l | grep -E "($(jq -r '.inbounds[].listen_port' config.json | tr '\n' '|' | sed 's/|$//'))" 2>/dev/null || echo "无法获取端口信息"
 else
-    echo "✗ sing-box 未运行"
+    echo "状态: 未运行"
 fi
 
 echo
-echo "端口监听："
-netstat -an | grep -E ":$(grep listen_port config.json | head -3 | grep -o '[0-9]\+' | tr '\n' '|' | sed 's/|$//')" 2>/dev/null || echo "无监听端口"
+echo "=== 系统资源 ==="
+echo "内存使用: $(free -h 2>/dev/null | awk 'NR==2{print $3"/"$2}' || echo '无法获取')"
+echo "磁盘使用: $(df -h . | awk 'NR==2{print $3"/"$2" ("$5")"}')"
+
+echo  
+echo "=== 最新日志 ==="
+tail -10 singbox.log 2>/dev/null || echo "无日志文件"
 EOF
 
+    # Restart script
     cat > restart.sh << 'EOF'
 #!/bin/bash
-cd "$HOME/sbx" || exit 1
+cd "$(dirname "$0")"
 
-echo "重启 sing-box..."
-pkill -f "sb-" 2>/dev/null
-sleep 2
-nohup ./sb-amd64 run -c config.json > sing-box.log 2>&1 &
+echo "正在重启 sing-box..."
+pkill -f "sb-amd64" 2>/dev/null || true
 sleep 2
 
-if pgrep -f "sb-" > /dev/null; then
-    echo "✓ 重启成功"
-else
-    echo "✗ 重启失败"
-    tail -n 10 sing-box.log
-fi
-EOF
-
-    cat > stop.sh << 'EOF'
-#!/bin/bash
-cd "$HOME/sbx" || exit 1
-
-echo "停止 sing-box..."
-pkill -f "sb-"
-sleep 2
-
-if ! pgrep -f "sb-" > /dev/null; then
-    echo "✓ 已停止"
-else
-    echo "强制终止..."
-    pkill -9 -f "sb-"
-fi
-EOF
-
-    cat > update_rules.sh << 'EOF'
-#!/bin/bash
-cd "$HOME/sbx" || exit 1
-
-echo "更新地理规则文件..."
-pkill -f "sb-" 2>/dev/null
-sleep 2
-
-# Clear old rule files
-rm -f *.srs 2>/dev/null
-
-echo "重启 sing-box..."
-nohup ./sb-amd64 run -c config.json > sing-box.log 2>&1 &
+nohup ./sb-amd64 run -c config.json > singbox.log 2>&1 &
 sleep 3
 
-if pgrep -f "sb-" > /dev/null; then
-    echo "✓ 规则更新完成"
+if pgrep -f "sb-amd64" > /dev/null; then
+    echo "✓ sing-box 重启成功"
 else
-    echo "✗ 启动失败"
-    tail -n 10 sing-box.log
+    echo "✗ sing-box 重启失败"
+    tail -10 singbox.log
 fi
 EOF
 
+    # Stop script
+    cat > stop.sh << 'EOF'
+#!/bin/bash
+echo "正在停止 sing-box..."
+if pgrep -f "sb-amd64" > /dev/null; then
+    pkill -f "sb-amd64"
+    sleep 2
+    if ! pgrep -f "sb-amd64" > /dev/null; then
+        echo "✓ sing-box 已停止"
+    else
+        echo "强制停止..."
+        pkill -9 -f "sb-amd64"
+        echo "✓ sing-box 已强制停止"
+    fi
+else
+    echo "sing-box 未运行"
+fi
+EOF
+
+    # Update rules script
+    cat > update_rules.sh << 'EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+
+echo "正在更新地理位置规则..."
+
+# Create rules directory
+mkdir -p rules
+
+# Download latest geoip and geosite
+download_file() {
+    local url="$1"
+    local output="$2"
+    
+    if command -v curl &> /dev/null; then
+        curl -L -o "$output" "$url"
+    elif command -v fetch &> /dev/null; then
+        fetch -o "$output" "$url"
+    else
+        echo "错误：需要 curl 或 fetch"
+        return 1
+    fi
+}
+
+# Download geoip and geosite files
+if download_file "https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip.db" "rules/geoip.db" && \
+   download_file "https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db" "rules/geosite.db"; then
+    echo "✓ 规则文件更新完成"
+    
+    # Restart if running
+    if pgrep -f "sb-amd64" > /dev/null; then
+        echo "正在重启 sing-box 以应用新规则..."
+        ./restart.sh
+    fi
+else
+    echo "✗ 规则文件更新失败"
+fi
+EOF
+
+    # Subscription generator script
     cat > subscription.sh << 'EOF'
 #!/bin/bash
-cd "$HOME/sbx" || exit 1
+cd "$(dirname "$0")"
 
-if [[ -f "subscription.txt" ]]; then
-    echo "节点订阅信息："
-    echo "=================="
-    cat subscription.txt
-    echo "=================="
-    echo
-    echo "文件位置: $HOME/sbx/subscription.txt"
-else
-    echo "订阅文件不存在"
+if [[ ! -f config.json ]]; then
+    echo "错误：配置文件不存在"
+    exit 1
 fi
+
+# Extract config from JSON
+UUID=$(jq -r '.inbounds[0].users[0].uuid' config.json)
+REALITY_PORT=$(jq -r '.inbounds[1].listen_port' config.json)
+VISION_PORT=$(jq -r '.inbounds[0].listen_port' config.json)
+GRPC_PORT=$(jq -r '.inbounds[2].listen_port' config.json)
+DOMAIN=$(jq -r '.inbounds[1].tls.server_name' config.json)
+PRIVATE_KEY=$(jq -r '.inbounds[1].tls.reality.private_key' config.json)
+
+# Generate public key from private key
+PUBLIC_KEY=$(echo "$PRIVATE_KEY" | ./sb-amd64 generate reality-keypair --private-key-input | grep "PublicKey:" | cut -d' ' -f2)
+
+# Get server IP
+SERVER_IP=$(ifconfig | awk '/inet /{if($2!="127.0.0.1" && $2!~/^169\.254/ && $2!~/^10\./ && $2!~/^192\.168\./ && $2!~/^172\.(1[6-9]|2[0-9]|3[01])\./) print $2; exit}')
+if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP=$(ifconfig | awk '/inet /{if($2!="127.0.0.1") print $2; exit}')
+fi
+
+# Generate links
+REALITY_LINK="vless://$UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=&type=tcp&headerType=none#Reality-$SERVER_IP"
+VISION_LINK="vless://$UUID@$SERVER_IP:$VISION_PORT?encryption=none&flow=xtls-rprx-vision&security=tls&sni=$DOMAIN&type=tcp&headerType=none#Vision-$SERVER_IP"
+GRPC_LINK="vless://$UUID@$SERVER_IP:$GRPC_PORT?encryption=none&flow=&security=tls&sni=$DOMAIN&type=grpc&serviceName=grpc&mode=gun#GRPC-$SERVER_IP"
+
+# Save links
+cat > links.txt << EOL
+$REALITY_LINK
+$VISION_LINK
+$GRPC_LINK
+EOL
+
+# Generate subscription
+base64 links.txt > subscription.txt
+
+echo "✓ 订阅信息已更新"
+echo "分享链接:"
+echo "Reality: $REALITY_LINK"
+echo "Vision: $VISION_LINK" 
+echo "GRPC: $GRPC_LINK"
 EOF
 
-    # Make all scripts executable
-    chmod +x SB check_status.sh restart.sh stop.sh update_rules.sh subscription.sh
+    # Management panel
+    cat > SB << 'EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+
+while true; do
+    clear
+    echo "================================"
+    echo "       SB 管理面板"
+    echo "================================"
+    echo "1. 启动 Sing-box"
+    echo "2. 停止 Sing-box"
+    echo "3. 重启 Sing-box"
+    echo "4. 查看状态"
+    echo "5. 实时日志"
+    echo "6. 更新地理规则"
+    echo "7. 生成订阅"
+    echo "8. 卸载"
+    echo "0. 退出"
+    echo "================================"
+    
+    read -p "请选择操作 [0-8]: " choice
+    
+    case $choice in
+        1)
+            if pgrep -f "sb-amd64" > /dev/null; then
+                echo "sing-box 已在运行"
+            else
+                nohup ./sb-amd64 run -c config.json > singbox.log 2>&1 &
+                sleep 2
+                if pgrep -f "sb-amd64" > /dev/null; then
+                    echo "✓ sing-box 启动成功"
+                else
+                    echo "✗ sing-box 启动失败"
+                fi
+            fi
+            ;;
+        2)
+            ./stop.sh
+            ;;
+        3)
+            ./restart.sh
+            ;;
+        4)
+            ./check_status.sh
+            ;;
+        5)
+            echo "按 Ctrl+C 退出日志查看"
+            tail -f singbox.log
+            ;;
+        6)
+            ./update_rules.sh
+            ;;
+        7)
+            ./subscription.sh
+            ;;
+        8)
+            read -p "确认卸载? [y/N]: " confirm
+            if [[ "$confirm" =~ ^[yY] ]]; then
+                ./stop.sh
+                cd ..
+                rm -rf "$(basename "$PWD")"
+                echo "✓ 卸载完成"
+                exit 0
+            fi
+            ;;
+        0)
+            exit 0
+            ;;
+        *)
+            echo "无效选择"
+            ;;
+    esac
+    
+    if [[ $choice != 5 ]]; then
+        read -p "按回车继续..."
+    fi
+done
+EOF
+
+    # Make scripts executable
+    chmod +x check_status.sh restart.sh stop.sh update_rules.sh subscription.sh SB
     
     green "✓ 管理工具已创建"
-    blue "  主管理工具: ./SB"
-    blue "  快捷命令: ./SB --start|--stop|--restart|--status|--logs"
 }
 
-# Update geo rules
-update_geo_rules() {
-    blue "正在更新地理规则..."
-    
-    # Rules will be downloaded automatically when sing-box starts
-    # Just clear any existing cached rules
-    rm -f *.srs 2>/dev/null
-    
-    green "✓ 地理规则缓存已清理，将在服务启动时自动下载"
-}
-
-# Main deployment function
+# Main function
 main() {
-    echo "==================================="
-    echo "   FreeBSD科学上网一键部署脚本"
-    echo "==================================="
+    clear
+    blue "==================================="
+    blue "   FreeBSD科学上网一键部署脚本"
+    blue "==================================="
     echo
     
+    # Pre-deployment checks
     check_environment
     check_dependencies
-    generate_configs
     
-    setup_directory
+    # Generate basic configs
+    generate_configs
     get_server_ip
+    
+    # Interactive configuration
     interactive_config
     
+    # Setup and download
+    setup_directory
     download_singbox
+    
+    # Generate keys and certificates
     generate_reality_keys
     generate_tls_cert
-    generate_config
     
+    # Configure and start
+    generate_config
     configure_firewall
-    start_services
+    start_singbox
+    
+    # Post-deployment
     generate_subscription
     create_management_tools
-    update_geo_rules
+    
+    # Update geo rules
+    blue "正在更新地理位置规则..."
+    ./update_rules.sh
     
     echo
-    green "🎉 部署完成！"
-    echo
-    blue "管理命令："
-    blue "  查看状态: $BASE_PATH/check_status.sh"
-    blue "  重启服务: $BASE_PATH/restart.sh"  
-    blue "  停止服务: $BASE_PATH/stop.sh"
-    blue "  更新规则: $BASE_PATH/update_rules.sh"
-    blue "  查看订阅: $BASE_PATH/subscription.sh"
-    blue "  管理面板: $BASE_PATH/SB"
-    echo
-    blue "快捷管理："
-    blue "  cd $BASE_PATH && ./SB"
-    echo
-    yellow "注意：订阅文件在 $BASE_PATH/subscription.txt"
-    yellow "如服务器IP获取错误，请手动修改配置文件中的IP地址"
+    green "部署完成！享受自由的网络环境！"
+    yellow "管理命令："
+    yellow "  查看状态: ./check_status.sh"
+    yellow "  重启服务: ./restart.sh" 
+    yellow "  停止服务: ./stop.sh"
+    yellow "  更新规则: ./update_rules.sh"
+    yellow "  重新生成订阅: ./subscription.sh"
+    yellow "  管理面板: ./SB"
 }
 
-# Script entry point - handle both file execution and piped execution
-if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]] || [[ "${BASH_SOURCE[0]:-}" =~ /dev/fd/ ]] || [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+# Script entry point
+# Support both file execution and pipe execution
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]] || [[ "${BASH_SOURCE[0]:-}" == "/dev/fd/"* ]] || [[ "${BASH_SOURCE[0]:-}" == "-" ]] || [[ -z "${BASH_SOURCE[0]:-}" ]]; then
     main "$@"
 fi
