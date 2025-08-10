@@ -884,6 +884,7 @@ main() {
     yellow "  停止服务: ./stop.sh"
     yellow "  更新规则: ./update_rules.sh"
     yellow "  重新生成订阅: ./subscription.sh"
+    yellow "  管理面板: ./SB"
 }
 
 # Script entry point
