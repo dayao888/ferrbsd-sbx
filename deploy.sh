@@ -126,24 +126,44 @@ generate_tls_cert() {
 
 # Get server IP (no external service)
 get_server_ip() {
-    # 通过默认路由接口获取IPv4
+    # Method 1: Try route + ifconfig
     local iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2}')
     if [[ -n "$iface" ]]; then
-        SERVER_IP=$(ifconfig "$iface" | awk '/inet /{print $2; exit}')
+        SERVER_IP=$(ifconfig "$iface" 2>/dev/null | awk '/inet /{if($2!="127.0.0.1") print $2; exit}')
     fi
     
+    # Method 2: Try common interface names
     if [[ -z "$SERVER_IP" ]]; then
-        # Fallback: try common interface names
-        for iface in em0 re0 igb0 bge0; do
-            if SERVER_IP=$(ifconfig "$iface" 2>/dev/null | awk '/inet /{print $2; exit}'); then
-                break
+        for iface in em0 re0 igb0 bge0 vtnet0; do
+            if SERVER_IP=$(ifconfig "$iface" 2>/dev/null | awk '/inet /{if($2!="127.0.0.1") print $2; exit}'); then
+                [[ -n "$SERVER_IP" ]] && break
             fi
         done
     fi
     
+    # Method 3: Parse all interfaces
+    if [[ -z "$SERVER_IP" ]]; then
+        SERVER_IP=$(ifconfig 2>/dev/null | awk '/inet /{if($2!="127.0.0.1" && $2!~/^169\.254\./ && $2!~/^10\./ && $2!~/^192\.168\./) print $2; exit}')
+    fi
+    
+    # Method 4: Allow any non-loopback IP
+    if [[ -z "$SERVER_IP" ]]; then
+        SERVER_IP=$(ifconfig 2>/dev/null | awk '/inet /{if($2!="127.0.0.1" && $2!~/^169\.254\./) print $2; exit}')
+    fi
+    
+    # Method 5: Manual input if all failed
     if [[ -z "$SERVER_IP" ]]; then
         red "无法自动获取服务器IP地址"
+        yellow "请查看可用网络接口："
+        ifconfig 2>/dev/null | grep -E "^[a-z]|inet " || echo "无法获取接口信息"
+        echo
         read -p "请手动输入服务器IP: " SERVER_IP
+        
+        # Validate IP format
+        if [[ ! "$SERVER_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            red "IP地址格式无效"
+            exit 1
+        fi
     fi
     
     green "✓ 服务器IP: $SERVER_IP"
