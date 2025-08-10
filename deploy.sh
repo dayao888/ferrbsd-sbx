@@ -256,6 +256,7 @@ interactive_config() {
 }
 
 # Download sing-box
+# Download sing-box
 download_singbox() {
     local arch
     
@@ -280,34 +281,146 @@ download_singbox() {
         return
     fi
     
-    blue "正在下载 sing-box..."
+    blue "正在安装 sing-box..."
     
-    # Try download methods
-    local url="https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-freebsd-$arch.tar.gz"
-    local download_success=false
-    
-    if command -v curl &> /dev/null; then
-        if curl -L -o "sing-box.tar.gz" "$url"; then
-            download_success=true
+    # FreeBSD: Try pkg first (recommended)
+    if command -v pkg &> /dev/null; then
+        blue "使用 FreeBSD pkg 安装 sing-box..."
+        if pkg info sing-box &>/dev/null; then
+            green "✓ sing-box 已通过 pkg 安装"
+            # Create symlink for consistency
+            if [[ -f /usr/local/bin/sing-box ]]; then
+                ln -sf /usr/local/bin/sing-box "$filename"
+                green "✓ 创建符号链接: $filename"
+                return
+            fi
+        else
+            yellow "尝试通过 pkg 安装 sing-box..."
+            if sudo pkg install -y sing-box; then
+                green "✓ sing-box 通过 pkg 安装成功"
+                # Create symlink for consistency
+                if [[ -f /usr/local/bin/sing-box ]]; then
+                    ln -sf /usr/local/bin/sing-box "$filename"
+                    green "✓ 创建符号链接: $filename"
+                    return
+                fi
+            else
+                yellow "pkg 安装失败，尝试从源码下载..."
+            fi
         fi
-    elif command -v fetch &> /dev/null; then
-        if fetch -o "sing-box.tar.gz" "$url"; then
-            download_success=true
+    fi
+    
+    # Fallback: Download from GitHub releases
+    blue "从 GitHub 下载 sing-box..."
+    
+    # Use specific version URL format for FreeBSD
+    local version_tag
+    if command -v curl &> /dev/null; then
+        version_tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' 2>/dev/null)
+    fi
+    
+    # If version detection failed, use latest
+    if [[ -z "$version_tag" || "$version_tag" == "null" ]]; then
+        version_tag="latest"
+    fi
+    
+    # Remove 'v' prefix if present
+    local version_number="${version_tag#v}"
+    
+    # Try different file formats
+    local download_success=false
+    local url_base="https://github.com/SagerNet/sing-box/releases"
+    
+    # Method 1: Try tar.gz with version
+    if [[ "$version_tag" != "latest" ]]; then
+        local url="$url_base/download/$version_tag/sing-box-$version_number-freebsd-$arch.tar.gz"
+        if command -v curl &> /dev/null; then
+            if curl -fsSL -o "sing-box.tar.gz" "$url" 2>/dev/null; then
+                download_success=true
+            fi
+        elif command -v fetch &> /dev/null; then
+            if fetch -o "sing-box.tar.gz" "$url" 2>/dev/null; then
+                download_success=true
+            fi
+        fi
+    fi
+    
+    # Method 2: Try latest download
+    if [[ "$download_success" != true ]]; then
+        local url="$url_base/latest/download/sing-box-freebsd-$arch.tar.gz"
+        if command -v curl &> /dev/null; then
+            if curl -fsSL -o "sing-box.tar.gz" "$url" 2>/dev/null; then
+                download_success=true
+            fi
+        elif command -v fetch &> /dev/null; then
+            if fetch -o "sing-box.tar.gz" "$url" 2>/dev/null; then
+                download_success=true
+            fi
+        fi
+    fi
+    
+    # Method 3: Try generic binary name
+    if [[ "$download_success" != true ]]; then
+        local url="$url_base/latest/download/sing-box-freebsd-$arch"
+        if command -v curl &> /dev/null; then
+            if curl -fsSL -o "$filename" "$url" 2>/dev/null; then
+                chmod +x "$filename"
+                green "✓ sing-box 二进制文件下载完成"
+                return
+            fi
+        elif command -v fetch &> /dev/null; then
+            if fetch -o "$filename" "$url" 2>/dev/null; then
+                chmod +x "$filename"
+                green "✓ sing-box 二进制文件下载完成"
+                return
+            fi
         fi
     fi
     
     if [[ "$download_success" != true ]]; then
-        red "下载失败，请检查网络连接"
+        red "所有下载方法都失败了"
+        yellow "请尝试手动安装："
+        yellow "1. sudo pkg install sing-box"
+        yellow "2. 或访问: https://github.com/SagerNet/sing-box/releases"
         exit 1
     fi
     
-    # Extract
-    tar -xzf sing-box.tar.gz
-    mv sing-box-*/sing-box "$filename"
-    rm -rf sing-box-* sing-box.tar.gz
-    chmod +x "$filename"
+    # Extract downloaded archive
+    blue "正在解压文件..."
     
-    green "✓ sing-box 下载完成"
+    # Check if file is actually a tar archive
+    if ! tar -tf sing-box.tar.gz &>/dev/null; then
+        red "下载的文件不是有效的 tar 归档"
+        yellow "可能是网络问题或文件不存在"
+        rm -f sing-box.tar.gz
+        exit 1
+    fi
+    
+    # Extract and setup
+    tar -xzf sing-box.tar.gz
+    
+    # Find the extracted binary
+    local extracted_binary
+    if [[ -f sing-box ]]; then
+        extracted_binary="sing-box"
+    elif [[ -f "sing-box-$version_number-freebsd-$arch/sing-box" ]]; then
+        extracted_binary="sing-box-$version_number-freebsd-$arch/sing-box"
+    else
+        # Search for any sing-box binary
+        extracted_binary=$(find . -name "sing-box" -type f | head -1)
+    fi
+    
+    if [[ -n "$extracted_binary" && -f "$extracted_binary" ]]; then
+        mv "$extracted_binary" "$filename"
+        chmod +x "$filename"
+        green "✓ sing-box 下载和解压完成"
+    else
+        red "无法找到 sing-box 二进制文件"
+        exit 1
+    fi
+    
+    # Cleanup
+    rm -rf sing-box.tar.gz sing-box-* 2>/dev/null || true
 }
 
 # Setup working directory
