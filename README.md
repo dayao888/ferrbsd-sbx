@@ -1,4 +1,4 @@
-# FreeBSD科学上网一键部署脚本
+#  测试ddc电子零延迟机密通信
 
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-14.x-red.svg)](https://www.freebsd.org/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
