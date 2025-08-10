@@ -889,6 +889,6 @@ main() {
 
 # Script entry point
 # Support both file execution and pipe execution
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]] || [[ "${BASH_SOURCE[0]}" == "/dev/fd/"* ]] || [[ "${BASH_SOURCE[0]}" == "-" ]]; then
+if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]] || [[ "${BASH_SOURCE[0]:-}" == "/dev/fd/"* ]] || [[ "${BASH_SOURCE[0]:-}" == "-" ]] || [[ -z "${BASH_SOURCE[0]:-}" ]]; then
     main "$@"
 fi
