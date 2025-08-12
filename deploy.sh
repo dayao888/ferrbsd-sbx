@@ -347,31 +347,51 @@ download_singbox() {
         fi
     fi
     
-    # Download from provided custom build URL
-    blue "从自定义编译版本下载 sing-box..."
+    # Download from provided custom build URL (with Reality support)
+    blue "从自定义编译版本下载 sing-box (包含Reality支持)..."
     
-    # Use the provided sb-amd64 binary URL
-    local custom_url="https://github.com/dayao888/ferrbsd-sbx/releases/download/v1.10/sb-amd64"
+    # Use architecture-specific URLs for better support
+    local custom_url
+    case "$arch" in
+        amd64)
+            custom_url="https://github.com/dayao888/ferrbsd-sbx/releases/download/v1.10/sb-amd64"
+            ;;
+        arm64)
+            custom_url="https://github.com/dayao888/ferrbsd-sbx/releases/download/v1.10/sb-arm64"
+            ;;
+        *)
+            custom_url="https://github.com/dayao888/ferrbsd-sbx/releases/download/v1.10/sb-amd64"
+            ;;
+    esac
+    
     local download_success=false
     
-    # Try downloading the custom compiled binary
+    # Try downloading the custom compiled binary with Reality support
     if command -v curl &> /dev/null; then
         if curl -fsSL -o "$filename" "$custom_url" 2>/dev/null; then
             chmod +x "$filename"
             download_success=true
-            green "✓ 自定义编译的 sing-box 二进制文件下载完成"
+            green "✓ 自定义编译的 sing-box 二进制文件下载完成 (包含Reality支持)"
         fi
     elif command -v fetch &> /dev/null; then
         if fetch -o "$filename" "$custom_url" 2>/dev/null; then
             chmod +x "$filename"
             download_success=true
-            green "✓ 自定义编译的 sing-box 二进制文件下载完成"
+            green "✓ 自定义编译的 sing-box 二进制文件下载完成 (包含Reality支持)"
         fi
     fi
     
-    # Fallback: Try original releases if custom build fails
+    # Verify Reality support: try running 'generate reality-keypair'
+    if [[ -x "$filename" ]]; then
+        if ! ./$filename generate reality-keypair >/dev/null 2>&1; then
+            yellow "检测到二进制缺少 Reality 支持，尝试官方版本..."
+            download_success=false
+        fi
+    fi
+
+    # Fallback: Try official releases if custom build fails or lacks reality support
     if [[ "$download_success" != true ]]; then
-        yellow "自定义版本下载失败，尝试官方版本..."
+        yellow "尝试下载官方版本..."
         
         local url_base="https://github.com/SagerNet/sing-box/releases"
         local url="$url_base/latest/download/sing-box-freebsd-$arch"
@@ -389,8 +409,21 @@ download_singbox() {
                 green "✓ 官方 sing-box 二进制文件下载完成"
             fi
         fi
+
+        # Verify Reality support again
+        if [[ "$download_success" == true ]]; then
+            if ! ./$filename generate reality-keypair >/dev/null 2>&1; then
+                red "下载的官方版本也缺少 Reality 支持。"
+                yellow "请手动安装包含 with_reality_server 标签编译的 sing-box。"
+                yellow "可选方案："
+                yellow "1. 使用 pkg 安装新版 sing-box (若仓库提供)"
+                yellow "2. 手动下载你仓库发布的 sb-amd64/sb-arm64 并确认已包含 Reality"
+                yellow "3. 自行编译: 'go build -tags with_reality_server'"
+                exit 1
+            fi
+        fi
     fi
-    
+
     if [[ "$download_success" != true ]]; then
         red "所有下载方法都失败了"
         yellow "请尝试手动安装："
