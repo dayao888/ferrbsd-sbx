@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ==========================================
-# FreeBSD科学上网一键部署脚本
-# 支持VLESS+Reality/Vision/GRPC协议
+# FreeBSD 科学上网一键部署脚本
+# 支持三协议：VLESS Reality、VMess WebSocket、Hysteria2
 # 自动配置防火墙、生成订阅、管理工具
 # ==========================================
 
@@ -20,9 +20,9 @@ UUID=""
 DOMAIN=""
 PRIVATE_KEY=""
 PUBLIC_KEY=""
-REALITY_PORT=""
-VISION_PORT=""
-GRPC_PORT=""
+HY2_PORT=""
+VLESS_PORT=""
+VMESS_PORT=""
 SERVER_IP=""
 BASE_PATH="$HOME/sbx"
 
@@ -81,20 +81,28 @@ check_dependencies() {
 # Generate UUID and other configs
 generate_configs() {
     UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-    REALITY_PORT=$((RANDOM % 10000 + 10000))
-    VISION_PORT=$((REALITY_PORT + 1))
-    GRPC_PORT=$((REALITY_PORT + 2))
+    HY2_PORT=$((RANDOM % 10000 + 10000))
+    VLESS_PORT=$((HY2_PORT + 1))
+    VMESS_PORT=$((HY2_PORT + 2))
     
     green "✓ 配置生成完成"
     blue "  UUID: $UUID"
-    blue "  Reality端口: $REALITY_PORT"
-    blue "  Vision端口: $VISION_PORT"  
-    blue "  GRPC端口: $GRPC_PORT"
-}
+    blue "  Hysteria2端口: $HY2_PORT"
+    blue "  VLESS端口: $VLESS_PORT"  
+    blue "  VMess端口: $VMESS_PORT"
+ }
 
 # Generate Reality keypair
 generate_reality_keys() {
-    local temp_output=$(./sb-amd64 generate reality-keypair)
+    # Determine binary name based on architecture
+    local arch=$(uname -m)
+    case "$arch" in
+        amd64|x86_64) BINARY_NAME="sb-amd64" ;;
+        arm64|aarch64) BINARY_NAME="sb-arm64" ;;
+        *) BINARY_NAME="sb-amd64" ;;  # Default fallback
+    esac
+    
+    local temp_output=$(./$BINARY_NAME generate reality-keypair)
     
     if [[ -z "$temp_output" ]]; then
         red "Reality密钥生成失败"
@@ -109,6 +117,9 @@ generate_reality_keys() {
         red "Reality密钥解析失败"
         exit 1
     fi
+    
+    # Save public key for subscription use
+    echo "$PUBLIC_KEY" > reality.pub
     
     green "✓ Reality密钥生成完成"
 }
@@ -197,7 +208,7 @@ interactive_config() {
         green "✓ 非交互模式：已使用默认配置"
         green "  伪装域名: $DOMAIN"
         green "  规则模式: ${rules_choice}"
-        green "  端口配置: $REALITY_PORT, $VISION_PORT, $GRPC_PORT"
+        green "  端口配置: $HY2_PORT, $VLESS_PORT, $VMESS_PORT"
         return
     fi
     
@@ -229,30 +240,31 @@ interactive_config() {
     yellow "规则配置："
     blue "1. 在线规则集（推荐）"
     blue "2. 本地规则文件"
-    read -p "请选择 [1-2, 默认1]: " rules_choice < /dev/tty
+    blue "3. 混合（本地优先，在线回退）"
+    read -p "请选择 [1-3, 默认1]: " rules_choice < /dev/tty
     
     # Port config
     echo
     yellow "端口配置："
-    blue "Reality端口: $REALITY_PORT"
-    blue "Vision端口: $VISION_PORT"
-    blue "GRPC端口: $GRPC_PORT"
+    blue "Hysteria2端口: $HY2_PORT"
+    blue "VLESS端口: $VLESS_PORT"
+    blue "VMess端口: $VMESS_PORT"
     read -p "是否修改端口? [y/N]: " change_port < /dev/tty
     
     if [[ "$change_port" =~ ^[yY] ]]; then
-        read -p "Reality端口 [$REALITY_PORT]: " new_reality < /dev/tty
-        read -p "Vision端口 [$VISION_PORT]: " new_vision < /dev/tty
-        read -p "GRPC端口 [$GRPC_PORT]: " new_grpc < /dev/tty
+        read -p "Hysteria2端口 [$HY2_PORT]: " new_hy2 < /dev/tty
+        read -p "VLESS端口 [$VLESS_PORT]: " new_vless < /dev/tty
+        read -p "VMess端口 [$VMESS_PORT]: " new_vmess < /dev/tty
         
-        REALITY_PORT=${new_reality:-$REALITY_PORT}
-        VISION_PORT=${new_vision:-$VISION_PORT}
-        GRPC_PORT=${new_grpc:-$GRPC_PORT}
+        HY2_PORT=${new_hy2:-$HY2_PORT}
+        VLESS_PORT=${new_vless:-$VLESS_PORT}
+        VMESS_PORT=${new_vmess:-$VMESS_PORT}
     fi
     
     green "✓ 交互配置完成"
     green "  伪装域名: $DOMAIN"
     green "  规则模式: ${rules_choice:-1}"
-    green "  端口配置: $REALITY_PORT, $VISION_PORT, $GRPC_PORT"
+    green "  端口配置: $HY2_PORT, $VLESS_PORT, $VMESS_PORT"
 }
 
 # Download sing-box
@@ -296,83 +308,85 @@ download_singbox() {
             fi
         else
             yellow "尝试通过 pkg 安装 sing-box..."
-            if sudo pkg install -y sing-box; then
-                green "✓ sing-box 通过 pkg 安装成功"
-                # Create symlink for consistency
-                if [[ -f /usr/local/bin/sing-box ]]; then
-                    ln -sf /usr/local/bin/sing-box "$filename"
-                    green "✓ 创建符号链接: $filename"
-                    return
+            
+            # Try different sudo locations
+            local sudo_cmd=""
+            if command -v sudo &> /dev/null; then
+                sudo_cmd="sudo"
+            elif [[ -f /usr/local/bin/sudo ]]; then
+                sudo_cmd="/usr/local/bin/sudo"
+            elif [[ -f /usr/bin/sudo ]]; then
+                sudo_cmd="/usr/bin/sudo"
+            fi
+            
+            if [[ -n "$sudo_cmd" ]]; then
+                if $sudo_cmd pkg install -y sing-box; then
+                    green "✓ sing-box 通过 pkg 安装成功"
+                    # Create symlink for consistency
+                    if [[ -f /usr/local/bin/sing-box ]]; then
+                        ln -sf /usr/local/bin/sing-box "$filename"
+                        green "✓ 创建符号链接: $filename"
+                        return
+                    fi
+                else
+                    yellow "pkg 安装失败，尝试从源码下载..."
                 fi
             else
-                yellow "pkg 安装失败，尝试从源码下载..."
+                yellow "未找到 sudo 命令，尝试直接安装..."
+                if pkg install -y sing-box; then
+                    green "✓ sing-box 通过 pkg 安装成功"
+                    if [[ -f /usr/local/bin/sing-box ]]; then
+                        ln -sf /usr/local/bin/sing-box "$filename"
+                        green "✓ 创建符号链接: $filename"
+                        return
+                    fi
+                else
+                    yellow "pkg 安装失败，尝试从源码下载..."
+                fi
             fi
         fi
     fi
     
-    # Fallback: Download from GitHub releases
-    blue "从 GitHub 下载 sing-box..."
+    # Download from provided custom build URL
+    blue "从自定义编译版本下载 sing-box..."
     
-    # Use specific version URL format for FreeBSD
-    local version_tag
-    if command -v curl &> /dev/null; then
-        version_tag=$(curl -s https://api.github.com/repos/SagerNet/sing-box/releases/latest | jq -r '.tag_name' 2>/dev/null)
-    fi
-    
-    # If version detection failed, use latest
-    if [[ -z "$version_tag" || "$version_tag" == "null" ]]; then
-        version_tag="latest"
-    fi
-    
-    # Remove 'v' prefix if present
-    local version_number="${version_tag#v}"
-    
-    # Try different file formats
+    # Use the provided sb-amd64 binary URL
+    local custom_url="https://github.com/dayao888/ferrbsd-sbx/releases/download/v1.10/sb-amd64"
     local download_success=false
-    local url_base="https://github.com/SagerNet/sing-box/releases"
     
-    # Method 1: Try tar.gz with version
-    if [[ "$version_tag" != "latest" ]]; then
-        local url="$url_base/download/$version_tag/sing-box-$version_number-freebsd-$arch.tar.gz"
-        if command -v curl &> /dev/null; then
-            if curl -fsSL -o "sing-box.tar.gz" "$url" 2>/dev/null; then
-                download_success=true
-            fi
-        elif command -v fetch &> /dev/null; then
-            if fetch -o "sing-box.tar.gz" "$url" 2>/dev/null; then
-                download_success=true
-            fi
+    # Try downloading the custom compiled binary
+    if command -v curl &> /dev/null; then
+        if curl -fsSL -o "$filename" "$custom_url" 2>/dev/null; then
+            chmod +x "$filename"
+            download_success=true
+            green "✓ 自定义编译的 sing-box 二进制文件下载完成"
+        fi
+    elif command -v fetch &> /dev/null; then
+        if fetch -o "$filename" "$custom_url" 2>/dev/null; then
+            chmod +x "$filename"
+            download_success=true
+            green "✓ 自定义编译的 sing-box 二进制文件下载完成"
         fi
     fi
     
-    # Method 2: Try latest download
+    # Fallback: Try original releases if custom build fails
     if [[ "$download_success" != true ]]; then
-        local url="$url_base/latest/download/sing-box-freebsd-$arch.tar.gz"
-        if command -v curl &> /dev/null; then
-            if curl -fsSL -o "sing-box.tar.gz" "$url" 2>/dev/null; then
-                download_success=true
-            fi
-        elif command -v fetch &> /dev/null; then
-            if fetch -o "sing-box.tar.gz" "$url" 2>/dev/null; then
-                download_success=true
-            fi
-        fi
-    fi
-    
-    # Method 3: Try generic binary name
-    if [[ "$download_success" != true ]]; then
+        yellow "自定义版本下载失败，尝试官方版本..."
+        
+        local url_base="https://github.com/SagerNet/sing-box/releases"
         local url="$url_base/latest/download/sing-box-freebsd-$arch"
+        
         if command -v curl &> /dev/null; then
             if curl -fsSL -o "$filename" "$url" 2>/dev/null; then
                 chmod +x "$filename"
-                green "✓ sing-box 二进制文件下载完成"
-                return
+                download_success=true
+                green "✓ 官方 sing-box 二进制文件下载完成"
             fi
         elif command -v fetch &> /dev/null; then
             if fetch -o "$filename" "$url" 2>/dev/null; then
                 chmod +x "$filename"
-                green "✓ sing-box 二进制文件下载完成"
-                return
+                download_success=true
+                green "✓ 官方 sing-box 二进制文件下载完成"
             fi
         fi
     fi
@@ -382,45 +396,11 @@ download_singbox() {
         yellow "请尝试手动安装："
         yellow "1. sudo pkg install sing-box"
         yellow "2. 或访问: https://github.com/SagerNet/sing-box/releases"
+        yellow "3. 或手动下载: $custom_url"
         exit 1
     fi
     
-    # Extract downloaded archive
-    blue "正在解压文件..."
-    
-    # Check if file is actually a tar archive
-    if ! tar -tf sing-box.tar.gz &>/dev/null; then
-        red "下载的文件不是有效的 tar 归档"
-        yellow "可能是网络问题或文件不存在"
-        rm -f sing-box.tar.gz
-        exit 1
-    fi
-    
-    # Extract and setup
-    tar -xzf sing-box.tar.gz
-    
-    # Find the extracted binary
-    local extracted_binary
-    if [[ -f sing-box ]]; then
-        extracted_binary="sing-box"
-    elif [[ -f "sing-box-$version_number-freebsd-$arch/sing-box" ]]; then
-        extracted_binary="sing-box-$version_number-freebsd-$arch/sing-box"
-    else
-        # Search for any sing-box binary
-        extracted_binary=$(find . -name "sing-box" -type f | head -1)
-    fi
-    
-    if [[ -n "$extracted_binary" && -f "$extracted_binary" ]]; then
-        mv "$extracted_binary" "$filename"
-        chmod +x "$filename"
-        green "✓ sing-box 下载和解压完成"
-    else
-        red "无法找到 sing-box 二进制文件"
-        exit 1
-    fi
-    
-    # Cleanup
-    rm -rf sing-box.tar.gz sing-box-* 2>/dev/null || true
+    green "✓ sing-box 二进制文件安装完成"
 }
 
 # Setup working directory
@@ -435,10 +415,15 @@ setup_directory() {
 
 # Generate sing-box config
 generate_config() {
+    blue "正在生成配置文件..."
+    
+    # 写入规则模式设置
+    echo "${rules_choice:-1}" > RULES_MODE
+    
     local rules_config
     
     if [[ "${rules_choice:-1}" == "1" ]]; then
-        # Online rules
+        # Online rules - 使用远程 .srs 规则
         rules_config='{
             "rules": [
                 {
@@ -535,42 +520,275 @@ generate_config() {
                 }
             ]
         }'
-    else
-        # Local rules
+    elif [[ "${rules_choice:-1}" == "2" ]]; then
+        # Local rules - 使用本地 .srs 文件
         rules_config='{
             "rules": [
                 {
-                    "geosite": [
-                        "category-ads-all"
+                    "rule_set": [
+                        "geosite-category-ads-all",
+                        "geosite-malware",
+                        "geosite-phishing"
                     ],
                     "outbound": "block"
                 },
                 {
-                    "geosite": [
-                        "private"
-                    ],
-                    "geoip": [
-                        "private"
+                    "rule_set": [
+                        "geosite-private",
+                        "geoip-private"
                     ],
                     "outbound": "direct"
                 },
                 {
-                    "geosite": [
-                        "geolocation-!cn"
+                    "rule_set": [
+                        "geosite-geolocation-!cn",
+                        "geoip-telegram"
                     ],
                     "outbound": "proxy"
                 },
                 {
-                    "geosite": [
-                        "cn"
-                    ],
-                    "geoip": [
-                        "cn"
+                    "rule_set": [
+                        "geosite-cn",
+                        "geoip-cn"
                     ],
                     "outbound": "direct"
                 }
+            ],
+            "rule_set": [
+                {
+                    "tag": "geosite-category-ads-all",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geosite-category-ads-all.srs"
+                },
+                {
+                    "tag": "geosite-malware",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geosite-malware.srs"
+                },
+                {
+                    "tag": "geosite-phishing",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geosite-phishing.srs"
+                },
+                {
+                    "tag": "geosite-private",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geosite-private.srs"
+                },
+                {
+                    "tag": "geoip-private",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geoip-private.srs"
+                },
+                {
+                    "tag": "geosite-geolocation-!cn",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geosite-geolocation-!cn.srs"
+                },
+                {
+                    "tag": "geoip-telegram",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geoip-telegram.srs"
+                },
+                {
+                    "tag": "geosite-cn",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geosite-cn.srs"
+                },
+                {
+                    "tag": "geoip-cn",
+                    "type": "local",
+                    "format": "binary",
+                    "path": "rules/geoip-cn.srs"
+                }
             ]
         }'
+    else
+        # Mixed mode - 如果本地文件存在则使用本地，否则使用远程
+        if [[ -f "rules/geosite-cn.srs" && -f "rules/geoip-cn.srs" ]]; then
+            # 使用本地 .srs 文件
+            rules_config='{
+                "rules": [
+                    {
+                        "rule_set": [
+                            "geosite-category-ads-all"
+                        ],
+                        "outbound": "block"
+                    },
+                    {
+                        "rule_set": [
+                            "geosite-private",
+                            "geoip-private"
+                        ],
+                        "outbound": "direct"
+                    },
+                    {
+                        "rule_set": [
+                            "geosite-geolocation-!cn",
+                            "geoip-telegram"
+                        ],
+                        "outbound": "proxy"
+                    },
+                    {
+                        "rule_set": [
+                            "geosite-cn",
+                            "geoip-cn"
+                        ],
+                        "outbound": "direct"
+                    }
+                ],
+                "rule_set": [
+                    {
+                        "tag": "geosite-category-ads-all",
+                        "type": "local",
+                        "format": "binary",
+                        "path": "rules/geosite-category-ads-all.srs"
+                    },
+                    {
+                        "tag": "geosite-private",
+                        "type": "local",
+                        "format": "binary",
+                        "path": "rules/geosite-private.srs"
+                    },
+                    {
+                        "tag": "geoip-private",
+                        "type": "local",
+                        "format": "binary",
+                        "path": "rules/geoip-private.srs"
+                    },
+                    {
+                        "tag": "geosite-geolocation-!cn",
+                        "type": "local",
+                        "format": "binary",
+                        "path": "rules/geosite-geolocation-!cn.srs"
+                    },
+                    {
+                        "tag": "geoip-telegram",
+                        "type": "local",
+                        "format": "binary",
+                        "path": "rules/geoip-telegram.srs"
+                    },
+                    {
+                        "tag": "geosite-cn",
+                        "type": "local",
+                        "format": "binary",
+                        "path": "rules/geosite-cn.srs"
+                    },
+                    {
+                        "tag": "geoip-cn",
+                        "type": "local",
+                        "format": "binary",
+                        "path": "rules/geoip-cn.srs"
+                    }
+                ]
+            }'
+        else
+            # 回退到远程规则
+            rules_config='{
+                "rules": [
+                    {
+                        "rule_set": [
+                            "geosite-category-ads-all",
+                            "geosite-malware",
+                            "geosite-phishing",
+                            "geosite-cryptominers"
+                        ],
+                        "outbound": "block"
+                    },
+                    {
+                        "rule_set": [
+                            "geosite-private",
+                            "geoip-private"
+                        ],
+                        "outbound": "direct"
+                    },
+                    {
+                        "rule_set": [
+                            "geosite-geolocation-!cn",
+                            "geoip-telegram"
+                        ],
+                        "outbound": "proxy"
+                    },
+                    {
+                        "rule_set": [
+                            "geosite-cn",
+                            "geoip-cn"
+                        ],
+                        "outbound": "direct"
+                    }
+                ],
+                "rule_set": [
+                    {
+                        "tag": "geosite-category-ads-all",
+                        "type": "remote",
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
+                    },
+                    {
+                        "tag": "geosite-malware",
+                        "type": "remote", 
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-malware.srs"
+                    },
+                    {
+                        "tag": "geosite-phishing",
+                        "type": "remote",
+                        "format": "binary", 
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-phishing.srs"
+                    },
+                    {
+                        "tag": "geosite-cryptominers",
+                        "type": "remote",
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cryptominers.srs"
+                    },
+                    {
+                        "tag": "geosite-private",
+                        "type": "remote",
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-private.srs"
+                    },
+                    {
+                        "tag": "geoip-private", 
+                        "type": "remote",
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-private.srs"
+                    },
+                    {
+                        "tag": "geosite-geolocation-!cn",
+                        "type": "remote",
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+                    },
+                    {
+                        "tag": "geoip-telegram",
+                        "type": "remote", 
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-telegram.srs"
+                    },
+                    {
+                        "tag": "geosite-cn",
+                        "type": "remote",
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+                    },
+                    {
+                        "tag": "geoip-cn",
+                        "type": "remote",
+                        "format": "binary", 
+                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+                    }
+                ]
+            }'
+        fi
     fi
 
     # Create main config
@@ -583,32 +801,31 @@ generate_config() {
     },
     "inbounds": [
         {
-            "type": "vless",
-            "tag": "vless-in-vision",
+            "type": "hysteria2",
+            "tag": "hy2-in",
             "listen": "::",
-            "listen_port": $VISION_PORT,
+            "listen_port": $HY2_PORT,
             "users": [
                 {
-                    "uuid": "$UUID",
-                    "flow": "xtls-rprx-vision"
+                    "password": "$UUID"
                 }
             ],
             "tls": {
                 "enabled": true,
-                "server_name": "$DOMAIN",
+                "server_name": "www.bing.com",
                 "certificate_path": "cert.pem",
                 "key_path": "private.key"
             }
         },
         {
             "type": "vless",
-            "tag": "vless-in-reality",
+            "tag": "vless-in",
             "listen": "::",
-            "listen_port": $REALITY_PORT,
+            "listen_port": $VLESS_PORT,
             "users": [
                 {
                     "uuid": "$UUID",
-                    "flow": ""
+                    "flow": "xtls-rprx-vision"
                 }
             ],
             "tls": {
@@ -626,25 +843,19 @@ generate_config() {
             }
         },
         {
-            "type": "vless",
-            "tag": "vless-in-grpc",
+            "type": "vmess",
+            "tag": "vmess-in",
             "listen": "::",
-            "listen_port": $GRPC_PORT,
+            "listen_port": $VMESS_PORT,
             "users": [
                 {
                     "uuid": "$UUID",
-                    "flow": ""
+                    "alterId": 0
                 }
             ],
-            "tls": {
-                "enabled": true,
-                "server_name": "$DOMAIN",
-                "certificate_path": "cert.pem",
-                "key_path": "private.key"
-            },
             "transport": {
-                "type": "grpc",
-                "service_name": "grpc"
+                "type": "ws",
+                "path": "/$UUID-vm"
             }
         }
     ],
@@ -673,29 +884,54 @@ EOF
 configure_firewall() {
     blue "正在配置防火墙..."
     
-    # Check if pf is enabled
-    if ! sudo pfctl -s info &>/dev/null; then
-        yellow "警告：PF防火墙未启用，跳过防火墙配置"
-        return
+    # Check if running as non-root user
+    if [[ $(id -u) -ne 0 ]]; then
+        # Try to check if sudo is available
+        if command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
+            # Sudo available without password
+            local can_sudo=true
+        else
+            yellow "当前为非root用户，跳过防火墙配置"
+            yellow "如需配置防火墙，请以管理员身份手动执行以下命令："
+            echo "# 添加防火墙规则到 /etc/pf.conf"
+            echo "pass in quick on any proto tcp from any to any port $VLESS_PORT"
+            echo "pass in quick on any proto tcp from any to any port $VMESS_PORT"
+            echo "pass in quick on any proto udp from any to any port $HY2_PORT"
+            echo "pass out quick on any proto tcp from any to any"
+            echo "pass out quick on any proto udp from any to any"
+            echo "# 然后重新载入规则: pfctl -f /etc/pf.conf"
+            return
+        fi
+    else
+        local can_sudo=true
     fi
     
-    # Add rules to pf.conf if not already present
-    local pf_rules="
+    # Proceed with firewall configuration if possible
+    if [[ "$can_sudo" == true ]]; then
+        # Check if pf is enabled
+        if ! sudo pfctl -s info &>/dev/null; then
+            yellow "警告：PF防火墙未启用，跳过防火墙配置"
+            return
+        fi
+        
+        # Add rules to pf.conf if not already present
+        local pf_rules="
 # Sing-box rules
-pass in quick on any proto tcp from any to any port $REALITY_PORT
-pass in quick on any proto tcp from any to any port $VISION_PORT  
-pass in quick on any proto tcp from any to any port $GRPC_PORT
+pass in quick on any proto tcp from any to any port $VLESS_PORT
+pass in quick on any proto tcp from any to any port $VMESS_PORT
+pass in quick on any proto udp from any to any port $HY2_PORT
 pass out quick on any proto tcp from any to any
 pass out quick on any proto udp from any to any
 "
-    
-    # Check if rules already exist
-    if ! sudo grep -q "Sing-box rules" /etc/pf.conf 2>/dev/null; then
-        echo "$pf_rules" | sudo tee -a /etc/pf.conf > /dev/null
-        sudo pfctl -f /etc/pf.conf
-        green "✓ 防火墙规则已添加"
-    else
-        yellow "防火墙规则已存在，跳过"
+        
+        # Check if rules already exist
+        if ! sudo grep -q "Sing-box rules" /etc/pf.conf 2>/dev/null; then
+            echo "$pf_rules" | sudo tee -a /etc/pf.conf > /dev/null
+            sudo pfctl -f /etc/pf.conf
+            green "✓ 防火墙规则已添加"
+        else
+            yellow "防火墙规则已存在，跳过"
+        fi
     fi
 }
 
@@ -703,16 +939,24 @@ pass out quick on any proto udp from any to any
 start_singbox() {
     blue "正在启动 sing-box..."
     
+    # Determine binary name based on architecture
+    local arch=$(uname -m)
+    case "$arch" in
+        amd64|x86_64) BINARY_NAME="sb-amd64" ;;
+        arm64|aarch64) BINARY_NAME="sb-arm64" ;;
+        *) BINARY_NAME="sb-amd64" ;;  # Default fallback
+    esac
+    
     # Kill existing process
-    pkill -f "sb-amd64" 2>/dev/null || true
+    pkill -f "$BINARY_NAME" 2>/dev/null || true
     
     # Start in background
-    nohup ./sb-amd64 run -c config.json > singbox.log 2>&1 &
+    nohup ./$BINARY_NAME run -c config.json > singbox.log 2>&1 &
     
     sleep 3
     
     # Check if started successfully
-    if pgrep -f "sb-amd64" > /dev/null; then
+    if pgrep -f "$BINARY_NAME" > /dev/null; then
         green "✓ sing-box 启动成功"
     else
         red "sing-box 启动失败，请检查日志:"
@@ -723,22 +967,25 @@ start_singbox() {
 
 # Generate subscription info
 generate_subscription() {
-    local reality_config vision_config grpc_config
+    local vless_link vmess_link hy2_link
+
+    echo "$SERVER_IP" > server.addr
     
-    # Reality config
-    reality_config="vless://$UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=&type=tcp&headerType=none#Reality-$SERVER_IP"
+    # VLESS Reality
+    vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
     
-    # Vision config  
-    vision_config="vless://$UUID@$SERVER_IP:$VISION_PORT?encryption=none&flow=xtls-rprx-vision&security=tls&sni=$DOMAIN&type=tcp&headerType=none#Vision-$SERVER_IP"
+    # VMess WebSocket
+    local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
+    vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
     
-    # GRPC config
-    grpc_config="vless://$UUID@$SERVER_IP:$GRPC_PORT?encryption=none&flow=&security=tls&sni=$DOMAIN&type=grpc&serviceName=grpc&mode=gun#GRPC-$SERVER_IP"
+    # Hysteria2
+    hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
     
     # Save to file
     cat > links.txt << EOF
-$reality_config
-$vision_config  
-$grpc_config
+$vless_link
+$vmess_link
+$hy2_link
 EOF
     
     # Generate base64 subscription
@@ -750,9 +997,9 @@ EOF
     
     echo
     blue "=== 分享链接 ==="
-    echo "Reality: $reality_config"
-    echo "Vision: $vision_config"
-    echo "GRPC: $grpc_config"
+    echo "VLESS Reality: $vless_link"
+    echo "VMess WS: $vmess_link"
+    echo "Hysteria2: $hy2_link"
 }
 
 # Create management tools
@@ -763,9 +1010,18 @@ create_management_tools() {
 cd "$(dirname "$0")"
 
 echo "=== Sing-box 状态 ==="
-if pgrep -f "sb-amd64" > /dev/null; then
+
+# Determine binary name
+arch=$(uname -m)
+case "$arch" in
+    amd64|x86_64) BINARY_NAME="sb-amd64" ;;
+    arm64|aarch64) BINARY_NAME="sb-arm64" ;;
+    *) BINARY_NAME="sb-amd64" ;;
+esac
+
+if pgrep -f "$BINARY_NAME" > /dev/null; then
     echo "状态: 运行中"
-    echo "进程ID: $(pgrep -f 'sb-amd64')"
+    echo "进程ID: $(pgrep -f '$BINARY_NAME')"
     echo "端口监听:"
     sockstat -l | grep -E "($(jq -r '.inbounds[].listen_port' config.json | tr '\n' '|' | sed 's/|$//'))" 2>/dev/null || echo "无法获取端口信息"
 else
@@ -788,13 +1044,22 @@ EOF
 cd "$(dirname "$0")"
 
 echo "正在重启 sing-box..."
-pkill -f "sb-amd64" 2>/dev/null || true
+
+# Determine binary name
+arch=$(uname -m)
+case "$arch" in
+    amd64|x86_64) BINARY_NAME="sb-amd64" ;;
+    arm64|aarch64) BINARY_NAME="sb-arm64" ;;
+    *) BINARY_NAME="sb-amd64" ;;
+esac
+
+pkill -f "$BINARY_NAME" 2>/dev/null || true
 sleep 2
 
-nohup ./sb-amd64 run -c config.json > singbox.log 2>&1 &
+nohup ./$BINARY_NAME run -c config.json > singbox.log 2>&1 &
 sleep 3
 
-if pgrep -f "sb-amd64" > /dev/null; then
+if pgrep -f "$BINARY_NAME" > /dev/null; then
     echo "✓ sing-box 重启成功"
 else
     echo "✗ sing-box 重启失败"
@@ -806,14 +1071,23 @@ EOF
     cat > stop.sh << 'EOF'
 #!/bin/bash
 echo "正在停止 sing-box..."
-if pgrep -f "sb-amd64" > /dev/null; then
-    pkill -f "sb-amd64"
+
+# Determine binary name
+arch=$(uname -m)
+case "$arch" in
+    amd64|x86_64) BINARY_NAME="sb-amd64" ;;
+    arm64|aarch64) BINARY_NAME="sb-arm64" ;;
+    *) BINARY_NAME="sb-amd64" ;;
+esac
+
+if pgrep -f "$BINARY_NAME" > /dev/null; then
+    pkill -f "$BINARY_NAME"
     sleep 2
-    if ! pgrep -f "sb-amd64" > /dev/null; then
+    if ! pgrep -f "$BINARY_NAME" > /dev/null; then
         echo "✓ sing-box 已停止"
     else
         echo "强制停止..."
-        pkill -9 -f "sb-amd64"
+        pkill -9 -f "$BINARY_NAME"
         echo "✓ sing-box 已强制停止"
     fi
 else
@@ -831,7 +1105,7 @@ echo "正在更新地理位置规则..."
 # Create rules directory
 mkdir -p rules
 
-# Download latest geoip and geosite
+# Download latest geoip and geosite files
 download_file() {
     local url="$1"
     local output="$2"
@@ -846,16 +1120,34 @@ download_file() {
     fi
 }
 
-# Download geoip and geosite files
-if download_file "https://github.com/SagerNet/sing-geoip/releases/latest/download/geoip.db" "rules/geoip.db" && \
-   download_file "https://github.com/SagerNet/sing-geosite/releases/latest/download/geosite.db" "rules/geosite.db"; then
+# Download .srs format rule files from MetaCubeX repository
+download_success=0
+if download_file "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-cn.srs" "rules/geoip-cn.srs" && \
+   download_file "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite-cn.srs" "rules/geosite-cn.srs" && \
+   download_file "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite-geolocation-!cn.srs" "rules/geosite-geolocation-!cn.srs" && \
+   download_file "https://github.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs" "rules/geosite-category-ads-all.srs" && \
+   download_file "https://github.com/SagerNet/sing-geosite/rule-set/geosite-private.srs" "rules/geosite-private.srs" && \
+   download_file "https://github.com/SagerNet/sing-geoip/rule-set/geoip-private.srs" "rules/geoip-private.srs" && \
+   download_file "https://github.com/SagerNet/sing-geoip/rule-set/geoip-telegram.srs" "rules/geoip-telegram.srs"; then
+    download_success=1
+fi
+
+if [ $download_success -eq 1 ]; then
     echo "✓ 规则文件更新完成"
     
-    # Restart if running
-    if pgrep -f "sb-amd64" > /dev/null; then
-        echo "正在重启 sing-box 以应用新规则..."
-        ./restart.sh
-    fi
+    # Determine binary name for restart check
+            arch=$(uname -m)
+            case "$arch" in
+                amd64|x86_64) BINARY_NAME="sb-amd64" ;;
+                arm64|aarch64) BINARY_NAME="sb-arm64" ;;
+                *) BINARY_NAME="sb-amd64" ;;
+            esac
+            
+            # Restart if running
+            if pgrep -f "$BINARY_NAME" > /dev/null; then
+                echo "正在重启 sing-box 以应用新规则..."
+                ./restart.sh
+            fi
 else
     echo "✗ 规则文件更新失败"
 fi
@@ -863,51 +1155,393 @@ EOF
 
     # Subscription generator script
     cat > subscription.sh << 'EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
+#!/usr/bin/env bash
 
-if [[ ! -f config.json ]]; then
-    echo "错误：配置文件不存在"
+# =============================================================================
+# FreeBSD科学上网订阅生成工具
+# 
+# 功能：生成V2rayN、Clash Meta、Sing-box格式订阅文件
+# =============================================================================
+
+# Color functions
+red() { echo -e "\033[31m\033[01m$1\033[0m"; }
+green() { echo -e "\033[32m\033[01m$1\033[0m"; }
+yellow() { echo -e "\033[33m\033[01m$1\033[0m"; }
+blue() { echo -e "\033[36m\033[01m$1\033[0m"; }
+
+# Check if config.json exists
+if [[ ! -f "config.json" ]]; then
+    red "错误：找不到config.json配置文件"
     exit 1
 fi
 
-# Extract config from JSON
-UUID=$(jq -r '.inbounds[0].users[0].uuid' config.json)
-REALITY_PORT=$(jq -r '.inbounds[1].listen_port' config.json)
-VISION_PORT=$(jq -r '.inbounds[0].listen_port' config.json)
-GRPC_PORT=$(jq -r '.inbounds[2].listen_port' config.json)
+# 读取规则模式
+if [[ -f "RULES_MODE" ]]; then
+  RULES_MODE=$(cat RULES_MODE | tr -d '\n')
+else
+  RULES_MODE=3
+fi
+
+# 如果是混合模式且本地规则缺失，给出提示
+if [[ "$RULES_MODE" == "3" ]]; then
+  if [[ ! -f rules/geoip-cn.srs || ! -f rules/geosite-cn.srs || ! -f rules/geosite-geolocation-!cn.srs ]]; then
+    yellow "提示：当前为混合模式，但本地规则文件不完整，将在订阅中使用本地路径。"
+    yellow "请先执行 ./update_rules.sh 下载本地规则文件，以获得最佳兼容性。"
+  fi
+fi
+
+# Read configuration from config.json
+UUID=$(jq -r '.inbounds[1].users[0].uuid' config.json)
+VLESS_PORT=$(jq -r '.inbounds[1].listen_port' config.json)
+VMESS_PORT=$(jq -r '.inbounds[2].listen_port' config.json)
+HY2_PORT=$(jq -r '.inbounds[0].listen_port' config.json)
 DOMAIN=$(jq -r '.inbounds[1].tls.server_name' config.json)
 PRIVATE_KEY=$(jq -r '.inbounds[1].tls.reality.private_key' config.json)
 
-# Generate public key from private key
-PUBLIC_KEY=$(echo "$PRIVATE_KEY" | ./sb-amd64 generate reality-keypair --private-key-input | grep "PublicKey:" | cut -d' ' -f2)
-
-# Get server IP
-SERVER_IP=$(ifconfig | awk '/inet /{if($2!="127.0.0.1" && $2!~/^169\.254/ && $2!~/^10\./ && $2!~/^192\.168\./ && $2!~/^172\.(1[6-9]|2[0-9]|3[01])\./) print $2; exit}')
-if [[ -z "$SERVER_IP" ]]; then
-    SERVER_IP=$(ifconfig | awk '/inet /{if($2!="127.0.0.1") print $2; exit}')
+# Get public key from saved file if exists
+if [[ -f reality.pub ]]; then
+  PUBLIC_KEY=$(cat reality.pub)
+else
+  # Fallback: try deriving from sb (may not support); leave empty if fail
+  PUBLIC_KEY=""
 fi
 
-# Generate links
-REALITY_LINK="vless://$UUID@$SERVER_IP:$REALITY_PORT?encryption=none&flow=&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=&type=tcp&headerType=none#Reality-$SERVER_IP"
-VISION_LINK="vless://$UUID@$SERVER_IP:$VISION_PORT?encryption=none&flow=xtls-rprx-vision&security=tls&sni=$DOMAIN&type=tcp&headerType=none#Vision-$SERVER_IP"
-GRPC_LINK="vless://$UUID@$SERVER_IP:$GRPC_PORT?encryption=none&flow=&security=tls&sni=$DOMAIN&type=grpc&serviceName=grpc&mode=gun#GRPC-$SERVER_IP"
+# Get server IP
+if [[ -f server.addr ]]; then
+    SERVER_IP=$(cat server.addr)
+fi
 
-# Save links
-cat > links.txt << EOL
-$REALITY_LINK
-$VISION_LINK
-$GRPC_LINK
-EOL
+if [[ -z "$SERVER_IP" || "$SERVER_IP" == "null" ]]; then
+    # try to read from config listen (not ideal for WAN), skip if empty
+    SERVER_IP=$(jq -r '.inbounds[0].listen' config.json 2>/dev/null)
+    [[ "$SERVER_IP" == "null" ]] && SERVER_IP=""
+fi
 
-# Generate subscription
-base64 links.txt > subscription.txt
+if [[ -z "$SERVER_IP" ]]; then
+    SERVER_IP=$(curl -s4 -m 10 https://api64.ipify.org)
+    if [[ -z "$SERVER_IP" ]]; then
+        SERVER_IP=$(curl -s4 -m 10 https://ifconfig.me)
+    fi
+fi
 
-echo "✓ 订阅信息已更新"
-echo "分享链接:"
-echo "Reality: $REALITY_LINK"
-echo "Vision: $VISION_LINK" 
-echo "GRPC: $GRPC_LINK"
+if [[ -z "$SERVER_IP" ]]; then
+    red "错误：无法获取服务器地址"
+    read -p "请输入服务器地址（IP或域名）: " SERVER_IP
+    if [[ -z "$SERVER_IP" ]]; then
+        red "必须输入服务器地址"
+        exit 1
+    fi
+fi
+
+# Create subscriptions directory
+mkdir -p subscriptions
+
+# Generate V2rayN subscription
+generate_v2rayn_subscription() {
+    # VLESS Reality link
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    
+    # VMess WebSocket link
+    local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
+    local vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
+    
+    # Hysteria2 link  
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    
+    # Create subscription file
+    cat > "subscriptions/${UUID}_v2sub.txt" <<EOL2
+$vless_link
+$vmess_link
+$hy2_link
+EOL2
+    
+    green "✓ V2rayN订阅文件已生成: subscriptions/${UUID}_v2sub.txt"
+}
+
+# Generate Clash Meta subscription
+generate_clashmeta_subscription() {
+    cat > "subscriptions/${UUID}_clashmeta.yaml" <<EOL3
+port: 7890
+socks-port: 7891
+redir-port: 7892
+allow-lan: false
+mode: Rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+proxies:
+  - name: "vless-reality-$SERVER_IP"
+    type: vless
+    server: $SERVER_IP
+    port: $VLESS_PORT
+    uuid: $UUID
+    network: tcp
+    flow: xtls-rprx-vision
+    tls: true
+    reality-opts:
+      public-key: $PUBLIC_KEY
+      short-id: ""
+    servername: $DOMAIN
+
+  - name: "vmess-ws-$SERVER_IP"  
+    type: vmess
+    server: $SERVER_IP
+    port: $VMESS_PORT
+    uuid: $UUID
+    alterId: 0
+    cipher: auto
+    network: ws
+    ws-opts:
+      path: /$UUID-vm
+
+  - name: "hysteria2-$SERVER_IP"
+    type: hysteria2
+    server: $SERVER_IP
+    port: $HY2_PORT
+    password: $UUID
+    sni: www.bing.com
+    skip-cert-verify: true
+
+proxy-groups:
+  - name: "Select"
+    type: select
+    proxies:
+      - "vless-reality-$SERVER_IP"
+      - "vmess-ws-$SERVER_IP"
+      - "hysteria2-$SERVER_IP"
+
+rules:
+  - GEOIP,LAN,DIRECT
+  - GEOIP,CN,DIRECT
+  - MATCH,Select
+EOL3
+    
+    green "✓ Clash Meta订阅文件已生成: subscriptions/${UUID}_clashmeta.yaml"
+}
+
+# Generate Sing-box subscription
+generate_singbox_subscription() {
+    # 根据RULES_MODE生成rule_set配置
+    local rule_set_json=""
+    if [[ "$RULES_MODE" == "1" ]]; then
+        # 在线模式
+        rule_set_json='[
+            {
+                "tag": "geoip-cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs",
+                "download_detour": "direct"
+            },
+            {
+                "tag": "geosite-cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
+                "download_detour": "direct"
+            }
+        ]'
+    else
+        # 本地模式和混合模式都使用本地路径
+        rule_set_json='[
+            {
+                "tag": "geoip-cn",
+                "type": "local",
+                "format": "binary",
+                "path": "rules/geoip-cn.srs"
+            },
+            {
+                "tag": "geosite-cn",
+                "type": "local",
+                "format": "binary",
+                "path": "rules/geosite-cn.srs"
+            }
+        ]'
+    fi
+
+    cat > "subscriptions/${UUID}_singbox.json" <<EOL4
+{
+    "log": {
+        "level": "info"
+    },
+    "dns": {
+        "servers": [
+            {
+                "tag": "google",
+                "address": "8.8.8.8"
+            },
+            {
+                "tag": "local",
+                "address": "223.5.5.5",
+                "detour": "direct"
+            }
+        ],
+        "rules": [
+            {
+                "rule_set": ["geosite-cn"],
+                "server": "local"
+            }
+        ]
+    },
+    "inbounds": [
+        {
+            "type": "mixed",
+            "listen": "127.0.0.1",
+            "listen_port": 2080,
+            "sniff": true
+        }
+    ],
+    "outbounds": [
+        {
+            "tag": "vless-reality",
+            "type": "vless",
+            "server": "$SERVER_IP",
+            "server_port": $VLESS_PORT,
+            "uuid": "$UUID",
+            "flow": "xtls-rprx-vision",
+            "tls": {
+                "enabled": true,
+                "server_name": "$DOMAIN",
+                "reality": {
+                    "enabled": true,
+                    "public_key": "$PUBLIC_KEY",
+                    "short_id": ""
+                }
+            }
+        },
+        {
+            "tag": "vmess-ws",
+            "type": "vmess",
+            "server": "$SERVER_IP",
+            "server_port": $VMESS_PORT,
+            "uuid": "$UUID",
+            "transport": {
+                "type": "ws",
+                "path": "/$UUID-vm"
+            }
+        },
+        {
+            "tag": "hysteria2",
+            "type": "hysteria2",
+            "server": "$SERVER_IP",
+            "server_port": $HY2_PORT,
+            "password": "$UUID",
+            "tls": {
+                "enabled": true,
+                "server_name": "www.bing.com",
+                "insecure": true
+            }
+        },
+        {
+            "tag": "select",
+            "type": "selector",
+            "outbounds": [
+                "vless-reality",
+                "vmess-ws", 
+                "hysteria2"
+            ]
+        },
+        {
+            "type": "direct",
+            "tag": "direct"
+        }
+    ],
+    "route": {
+        "rule_set": $rule_set_json,
+        "rules": [
+            {
+                "rule_set": ["geoip-cn", "geosite-cn"],
+                "outbound": "direct"
+            }
+        ],
+        "final": "select"
+    }
+}
+EOL4
+    
+    green "✓ Sing-box订阅文件已生成: subscriptions/${UUID}_singbox.json"
+}
+
+# Display subscription information
+display_info() {
+    blue "======================== 订阅信息 ========================"
+    echo
+    green "服务器信息:"
+    echo "  IP地址: $SERVER_IP"
+    echo "  UUID: $UUID"
+    echo "  VLESS端口: $VLESS_PORT"
+    echo "  VMess端口: $VMESS_PORT"
+    echo "  Hysteria2端口: $HY2_PORT"
+    echo "  Reality域名: $DOMAIN"
+    echo
+    green "订阅文件:"
+    echo "  V2rayN: subscriptions/${UUID}_v2sub.txt"
+    echo "  Clash Meta: subscriptions/${UUID}_clashmeta.yaml"
+    echo "  Sing-box: subscriptions/${UUID}_singbox.json"
+    echo
+    yellow "分享链接（单独使用）:"
+    
+    # VLESS link
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    echo
+    echo "VLESS Reality:"
+    echo "$vless_link"
+    
+    # VMess link
+    local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
+    local vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
+    echo
+    echo "VMess WebSocket:"
+    echo "$vmess_link"
+    
+    # Hysteria2 link
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    echo
+    echo "Hysteria2:"
+    echo "$hy2_link"
+    
+    blue "======================================================"
+}
+
+# Generate links for backward compatibility
+generate_legacy_links() {
+    # VLESS link
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    
+    # VMess link
+    local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
+    local vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
+    
+    # Hysteria2 link
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    
+    # Save links
+    cat > links.txt <<EOL5
+$vless_link
+$vmess_link
+$hy2_link
+EOL5
+    
+    # Generate subscription
+    base64 links.txt > subscription.txt
+}
+
+# Main function
+main() {
+    blue "正在生成订阅文件..."
+    
+    generate_v2rayn_subscription
+    generate_clashmeta_subscription  
+    generate_singbox_subscription
+    generate_legacy_links
+    
+    display_info
+}
+
+# Run if executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
 EOF
 
     # Management panel
@@ -935,12 +1569,20 @@ while true; do
     
     case $choice in
         1)
-            if pgrep -f "sb-amd64" > /dev/null; then
+            # Determine binary name
+            arch=$(uname -m)
+            case "$arch" in
+                amd64|x86_64) BINARY_NAME="sb-amd64" ;;
+                arm64|aarch64) BINARY_NAME="sb-arm64" ;;
+                *) BINARY_NAME="sb-amd64" ;;
+            esac
+            
+            if pgrep -f "$BINARY_NAME" > /dev/null; then
                 echo "sing-box 已在运行"
             else
-                nohup ./sb-amd64 run -c config.json > singbox.log 2>&1 &
+                nohup ./$BINARY_NAME run -c config.json > singbox.log 2>&1 &
                 sleep 2
-                if pgrep -f "sb-amd64" > /dev/null; then
+                if pgrep -f "$BINARY_NAME" > /dev/null; then
                     echo "✓ sing-box 启动成功"
                 else
                     echo "✗ sing-box 启动失败"
