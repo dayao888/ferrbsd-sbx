@@ -894,6 +894,14 @@ generate_config() {
     ],
     "outbounds": [
         {
+            "type": "selector",
+            "tag": "proxy",
+            "outbounds": [
+                "direct"
+            ],
+            "default": "direct"
+        },
+        {
             "type": "direct",
             "tag": "direct"
         },
