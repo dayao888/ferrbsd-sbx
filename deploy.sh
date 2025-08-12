@@ -70,8 +70,8 @@ check_dependencies() {
     if [[ ${#missing_tools[@]} -gt 0 ]]; then
         red "错误：缺少必要工具：${missing_tools[*]}"
         echo
-        yellow "请先安装缺少的工具："
-        yellow "pkg install curl jq openssl"
+        yellow "请先安装缺少的工具（仅依赖）："
+        yellow "pkg install curl jq openssl  # 不通过 pkg 安装 sing-box，本脚本将从自编译仓库下载"
         exit 1
     fi
     
@@ -366,15 +366,15 @@ interactive_config() {
     # Port config
     echo
     yellow "端口配置："
-    blue "Hysteria2端口: $HY2_PORT"
-    blue "VLESS端口: $VLESS_PORT"
-    blue "VMess端口: $VMESS_PORT"
+    blue "Hysteria2端口: $HY2_PORT (UDP)"
+    blue "VLESS端口: $VLESS_PORT (TCP)"
+    blue "VMess端口: $VMESS_PORT (TCP)"
     read -p "是否修改端口? [y/N]: " change_port < /dev/tty
     
     if [[ "$change_port" =~ ^[yY] ]]; then
-        read -p "Hysteria2端口 [$HY2_PORT]: " new_hy2 < /dev/tty
-        read -p "VLESS端口 [$VLESS_PORT]: " new_vless < /dev/tty
-        read -p "VMess端口 [$VMESS_PORT]: " new_vmess < /dev/tty
+        read -p "Hysteria2端口 [$HY2_PORT] (UDP): " new_hy2 < /dev/tty
+        read -p "VLESS端口 [$VLESS_PORT] (TCP): " new_vless < /dev/tty
+        read -p "VMess端口 [$VMESS_PORT] (TCP): " new_vmess < /dev/tty
         
         HY2_PORT=${new_hy2:-$HY2_PORT}
         VLESS_PORT=${new_vless:-$VLESS_PORT}
@@ -387,8 +387,7 @@ interactive_config() {
     green "  端口配置: $HY2_PORT, $VLESS_PORT, $VMESS_PORT"
 }
 
-# Download sing-box
-# Download sing-box
+# Download sing-box from custom build (GitHub repository)
 download_singbox() {
     local arch
     
@@ -413,62 +412,10 @@ download_singbox() {
         return
     fi
     
-    blue "正在安装 sing-box..."
-    
-    # FreeBSD: Try pkg first (recommended)
-    if command -v pkg &> /dev/null; then
-        blue "使用 FreeBSD pkg 安装 sing-box..."
-        if pkg info sing-box &>/dev/null; then
-            green "✓ sing-box 已通过 pkg 安装"
-            # Create symlink for consistency
-            if [[ -f /usr/local/bin/sing-box ]]; then
-                ln -sf /usr/local/bin/sing-box "$filename"
-                green "✓ 创建符号链接: $filename"
-                return
-            fi
-        else
-            yellow "尝试通过 pkg 安装 sing-box..."
-            
-            # Try different sudo locations
-            local sudo_cmd=""
-            if command -v sudo &> /dev/null; then
-                sudo_cmd="sudo"
-            elif [[ -f /usr/local/bin/sudo ]]; then
-                sudo_cmd="/usr/local/bin/sudo"
-            elif [[ -f /usr/bin/sudo ]]; then
-                sudo_cmd="/usr/bin/sudo"
-            fi
-            
-            if [[ -n "$sudo_cmd" ]]; then
-                if $sudo_cmd pkg install -y sing-box; then
-                    green "✓ sing-box 通过 pkg 安装成功"
-                    # Create symlink for consistency
-                    if [[ -f /usr/local/bin/sing-box ]]; then
-                        ln -sf /usr/local/bin/sing-box "$filename"
-                        green "✓ 创建符号链接: $filename"
-                        return
-                    fi
-                else
-                    yellow "pkg 安装失败，尝试从源码下载..."
-                fi
-            else
-                yellow "未找到 sudo 命令，尝试直接安装..."
-                if pkg install -y sing-box; then
-                    green "✓ sing-box 通过 pkg 安装成功"
-                    if [[ -f /usr/local/bin/sing-box ]]; then
-                        ln -sf /usr/local/bin/sing-box "$filename"
-                        green "✓ 创建符号链接: $filename"
-                        return
-                    fi
-                else
-                    yellow "pkg 安装失败，尝试从源码下载..."
-                fi
-            fi
-        fi
-    fi
+    blue "正在下载 sing-box (包含Reality支持的自编译版本)..."
     
     # Download from provided custom build URL (with Reality support)
-    blue "从自定义编译版本下载 sing-box (包含Reality支持)..."
+    blue "从 GitHub 仓库下载自编译的 sing-box..."
     
     # Use architecture-specific URLs for better support
     local custom_url
@@ -504,52 +451,19 @@ download_singbox() {
     # Verify Reality support: try running 'generate reality-keypair'
     if [[ -x "$filename" ]]; then
         if ! ./$filename generate reality-keypair >/dev/null 2>&1; then
-            yellow "检测到二进制缺少 Reality 支持，尝试官方版本..."
-            download_success=false
-        fi
-    fi
-
-    # Fallback: Try official releases if custom build fails or lacks reality support
-    if [[ "$download_success" != true ]]; then
-        yellow "尝试下载官方版本..."
-        
-        local url_base="https://github.com/SagerNet/sing-box/releases"
-        local url="$url_base/latest/download/sing-box-freebsd-$arch"
-        
-        if command -v curl &> /dev/null; then
-            if curl -fsSL -o "$filename" "$url" 2>/dev/null; then
-                chmod +x "$filename"
-                download_success=true
-                green "✓ 官方 sing-box 二进制文件下载完成"
-            fi
-        elif command -v fetch &> /dev/null; then
-            if fetch -o "$filename" "$url" 2>/dev/null; then
-                chmod +x "$filename"
-                download_success=true
-                green "✓ 官方 sing-box 二进制文件下载完成"
-            fi
-        fi
-
-        # Verify Reality support again
-        if [[ "$download_success" == true ]]; then
-            if ! ./$filename generate reality-keypair >/dev/null 2>&1; then
-                red "下载的官方版本也缺少 Reality 支持。"
-                yellow "请手动安装包含 with_reality_server 标签编译的 sing-box。"
-                yellow "可选方案："
-                yellow "1. 使用 pkg 安装新版 sing-box (若仓库提供)"
-                yellow "2. 手动下载你仓库发布的 sb-amd64/sb-arm64 并确认已包含 Reality"
-                yellow "3. 自行编译: 'go build -tags with_reality_server'"
-                exit 1
-            fi
+            red "自编译二进制缺少 Reality 支持或文件损坏，请重新下载或联系我们维护发布包。"
+            yellow "可选方案："
+            yellow "1. 手动下载你仓库发布的 sb-amd64/sb-arm64 并确认已包含 Reality"
+            yellow "2. 自行编译: 'go build -tags with_reality_server'"
+            exit 1
         fi
     fi
 
     if [[ "$download_success" != true ]]; then
         red "所有下载方法都失败了"
         yellow "请尝试手动安装："
-        yellow "1. sudo pkg install sing-box"
-        yellow "2. 或访问: https://github.com/SagerNet/sing-box/releases"
-        yellow "3. 或手动下载: $custom_url"
+        yellow "1. 访问: https://github.com/SagerNet/sing-box/releases"
+        yellow "2. 或手动下载: $custom_url"
         exit 1
     fi
     
