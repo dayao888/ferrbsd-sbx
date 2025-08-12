@@ -1,0 +1,40 @@
+# OS artifacts
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+sb.log
+
+# Runtime / generated files
+config.json
+RULES_MODE
+reality.key
+reality.pub
+server.addr
+links.txt
+subscription.txt
+subscriptions/
+rules/
+
+# Generated helper scripts (created by deploy/management)
+SB
+check_status.sh
+restart.sh
+stop.sh
+
+# Binaries
+sb-amd64
+sb-arm64
+sing-box
+sing-box-*
+*.exe
+*.bin
+
+# Archives
+*.tar
+*.gz
+*.zip
+*.7z
