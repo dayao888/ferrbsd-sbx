@@ -25,12 +25,20 @@ else
   RULES_MODE=3
 fi
 
+# 如果是混合模式且本地规则缺失，给出提示
+if [[ "$RULES_MODE" == "3" ]]; then
+  if [[ ! -f rules/geoip-cn.srs || ! -f rules/geosite-cn.srs || ! -f rules/geosite-geolocation-!cn.srs ]]; then
+    yellow "提示：当前为混合模式，但本地规则文件不完整，将在订阅中使用本地路径。"
+    yellow "请先执行 ./update_rules.sh 下载本地规则文件，以获得最佳兼容性。"
+  fi
+fi
+
 # Read configuration from config.json
 UUID=$(jq -r '.inbounds[1].users[0].uuid' config.json)
 VLESS_PORT=$(jq -r '.inbounds[1].listen_port' config.json)
 VMESS_PORT=$(jq -r '.inbounds[2].listen_port' config.json)
 HY2_PORT=$(jq -r '.inbounds[0].listen_port' config.json)
-REALITY_DOMAIN=$(jq -r '.inbounds[1].tls.server_name' config.json)
+DOMAIN=$(jq -r '.inbounds[1].tls.server_name' config.json)
 PRIVATE_KEY=$(jq -r '.inbounds[1].tls.reality.private_key' config.json)
 
 # Get public key from saved file if exists
@@ -74,7 +82,7 @@ mkdir -p subscriptions
 # Generate V2rayN subscription
 generate_v2rayn_subscription() {
     # VLESS Reality link
-    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$REALITY_DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
     
     # VMess WebSocket link
     local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
@@ -116,7 +124,7 @@ proxies:
     reality-opts:
       public-key: $PUBLIC_KEY
       short-id: ""
-    servername: $REALITY_DOMAIN
+    servername: $DOMAIN
 
   - name: "vmess-ws-$SERVER_IP"  
     type: vmess
@@ -213,7 +221,7 @@ generate_singbox_subscription() {
         ],
         "rules": [
             {
-                "geosite": "cn",
+                "rule_set": ["geosite-cn"],
                 "server": "local"
             }
         ]
@@ -236,7 +244,7 @@ generate_singbox_subscription() {
             "flow": "xtls-rprx-vision",
             "tls": {
                 "enabled": true,
-                "server_name": "$REALITY_DOMAIN",
+                "server_name": "$DOMAIN",
                 "reality": {
                     "enabled": true,
                     "public_key": "$PUBLIC_KEY",
@@ -307,7 +315,7 @@ display_info() {
     echo "  VLESS端口: $VLESS_PORT"
     echo "  VMess端口: $VMESS_PORT"
     echo "  Hysteria2端口: $HY2_PORT"
-    echo "  Reality域名: $REALITY_DOMAIN"
+    echo "  Reality域名: $DOMAIN"
     echo
     green "订阅文件:"
     echo "  V2rayN: subscriptions/${UUID}_v2sub.txt"
@@ -317,7 +325,7 @@ display_info() {
     yellow "分享链接（单独使用）:"
     
     # VLESS link
-    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$REALITY_DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
     echo
     echo "VLESS Reality:"
     echo "$vless_link"
