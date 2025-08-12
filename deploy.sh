@@ -78,12 +78,132 @@ check_dependencies() {
     green "✓ 依赖检查通过"
 }
 
+# Smart port allocation with scanning and user interaction
+smart_port_allocation() {
+    blue "=== 端口分配模式 ==="
+    echo "1) 自动扫描可用端口 (推荐，范围: 20000-40000)"
+    echo "2) 手动指定端口"
+    echo "3) 随机端口 (原始模式，范围: 10000-20000)"
+    
+    # 非交互模式使用默认自动扫描
+    if [[ ! -t 0 ]]; then
+        port_mode=1
+        blue "非交互模式：使用自动扫描端口"
+    else
+        read -p "请选择端口分配模式 [1-3, 默认1]: " port_mode < /dev/tty
+        port_mode=${port_mode:-1}
+    fi
+    
+    case $port_mode in
+        1)
+            blue "正在扫描 20000-40000 范围内的可用端口..."
+            HY2_PORT=$(scan_available_port 20000 40000)
+            VLESS_PORT=$(scan_available_port $((HY2_PORT + 1)) 40000)
+            VMESS_PORT=$(scan_available_port $((VLESS_PORT + 1)) 40000)
+            
+            if [[ -z "$HY2_PORT" || -z "$VLESS_PORT" || -z "$VMESS_PORT" ]]; then
+                yellow "端口扫描失败，回退到随机模式"
+                generate_random_ports
+            else
+                green "✓ 自动分配端口: HY2=$HY2_PORT, VLESS=$VLESS_PORT, VMESS=$VMESS_PORT"
+            fi
+            ;;
+        2)
+            blue "=== 手动指定端口模式 ==="
+            echo "端口范围: 20000-40000 (TCP/UDP)"
+            echo "当前占用端口:"
+            sockstat -l | grep -E ":2[0-9]{4}|:3[0-9]{4}|:4[0-9]{4}" || echo "无相关端口占用"
+            echo ""
+            
+            while true; do
+                read -p "Hysteria2 端口 (UDP, 20000-40000): " HY2_PORT < /dev/tty
+                read -p "VLESS 端口 (TCP, 20000-40000): " VLESS_PORT < /dev/tty
+                read -p "VMess 端口 (TCP, 20000-40000): " VMESS_PORT < /dev/tty
+                
+                if validate_ports "$HY2_PORT" "$VLESS_PORT" "$VMESS_PORT"; then
+                    break
+                else
+                    red "端口验证失败，请重新输入"
+                fi
+            done
+            ;;
+        3)
+            blue "使用随机端口模式"
+            generate_random_ports
+            ;;
+        *)
+            yellow "无效选择，使用默认自动扫描模式"
+            smart_port_allocation
+            ;;
+    esac
+}
+
+# Port scanning function for FreeBSD
+scan_available_port() {
+    local start_port=${1:-20000}
+    local end_port=${2:-40000}
+    
+    for port in $(seq $start_port $end_port); do
+        # Check if port is available using sockstat
+        if ! sockstat -l | grep -q ":$port "; then
+            echo $port
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Validate user input ports  
+validate_ports() {
+    local hy2=$1 vless=$2 vmess=$3
+    
+    # Check if all ports are provided
+    if [[ -z "$hy2" || -z "$vless" || -z "$vmess" ]]; then
+        red "所有端口都必须填写"
+        return 1
+    fi
+    
+    # Check port range and format
+    for port in $hy2 $vless $vmess; do
+        if [[ ! "$port" =~ ^[0-9]+$ ]] || [[ $port -lt 20000 ]] || [[ $port -gt 40000 ]]; then
+            red "端口 $port 不在有效范围 20000-40000"
+            return 1
+        fi
+    done
+    
+    # Check for duplicates
+    if [[ "$hy2" == "$vless" ]] || [[ "$hy2" == "$vmess" ]] || [[ "$vless" == "$vmess" ]]; then
+        red "端口不能重复"
+        return 1
+    fi
+    
+    # Check if ports are available
+    for port in $hy2 $vless $vmess; do
+        if sockstat -l | grep -q ":$port "; then
+            red "端口 $port 已被占用："
+            sockstat -l | grep ":$port "
+            return 1
+        fi
+    done
+    
+    green "✓ 端口验证通过: HY2=$hy2, VLESS=$vless, VMESS=$vmess"
+    return 0
+}
+
+# Fallback random port generation
+generate_random_ports() {
+    HY2_PORT=$((RANDOM % 10000 + 20000))
+    VLESS_PORT=$((RANDOM % 10000 + 20000))
+    VMESS_PORT=$((RANDOM % 10000 + 20000))
+    yellow "随机端口: HY2=$HY2_PORT, VLESS=$VLESS_PORT, VMESS=$VMESS_PORT"
+}
+
 # Generate UUID and other configs
 generate_configs() {
     UUID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-    HY2_PORT=$((RANDOM % 10000 + 10000))
-    VLESS_PORT=$((HY2_PORT + 1))
-    VMESS_PORT=$((HY2_PORT + 2))
+    
+    # Smart port allocation
+    smart_port_allocation
     
     green "✓ 配置生成完成"
     blue "  UUID: $UUID"
@@ -836,7 +956,7 @@ generate_config() {
         {
             "type": "hysteria2",
             "tag": "hy2-in",
-            "listen": "::",
+            "listen": "0.0.0.0",
             "listen_port": $HY2_PORT,
             "users": [
                 {
@@ -853,7 +973,7 @@ generate_config() {
         {
             "type": "vless",
             "tag": "vless-in",
-            "listen": "::",
+            "listen": "0.0.0.0",
             "listen_port": $VLESS_PORT,
             "users": [
                 {
@@ -878,7 +998,7 @@ generate_config() {
         {
             "type": "vmess",
             "tag": "vmess-in",
-            "listen": "::",
+            "listen": "0.0.0.0",
             "listen_port": $VMESS_PORT,
             "users": [
                 {
@@ -988,20 +1108,56 @@ start_singbox() {
         *) BINARY_NAME="sb-amd64" ;;  # Default fallback
     esac
     
+    # Pre-check: validate configuration syntax
+    blue "检查配置文件语法..."
+    if ! ./$BINARY_NAME check -c config.json >/dev/null 2>&1; then
+        red "配置文件语法错误:"
+        ./$BINARY_NAME check -c config.json
+        exit 1
+    fi
+    green "✓ 配置文件语法正确"
+    
+    # Pre-check: test port availability
+    blue "检查端口可用性..."
+    local ports=($(jq -r '.inbounds[].listen_port' config.json))
+    for port in "${ports[@]}"; do
+        if sockstat -l | grep -q ":$port "; then
+            yellow "警告: 端口 $port 已被占用"
+            sockstat -l | grep ":$port "
+        fi
+    done
+    
     # Kill existing process
     pkill -f "$BINARY_NAME" 2>/dev/null || true
+    sleep 1
     
     # Start in background
+    blue "启动 sing-box 服务..."
     nohup ./$BINARY_NAME run -c config.json > singbox.log 2>&1 &
+    local start_pid=$!
     
     sleep 3
     
     # Check if started successfully
     if pgrep -f "$BINARY_NAME" > /dev/null; then
         green "✓ sing-box 启动成功"
+        blue "监听端口:"
+        sockstat -l | grep -E "($(jq -r '.inbounds[].listen_port' config.json | tr '\n' '|' | sed 's/|$//'))" 2>/dev/null || echo "无法获取端口信息"
     else
         red "sing-box 启动失败，请检查日志:"
+        echo "=== 错误日志 ==="
         tail -20 singbox.log
+        echo ""
+        echo "=== 诊断信息 ==="
+        echo "用户ID: $(id)"
+        echo "端口权限检查:"
+        for port in "${ports[@]}"; do
+            if [[ $port -lt 1024 ]]; then
+                red "  端口 $port < 1024，需要 root 权限"
+            else
+                green "  端口 $port >= 1024，普通用户可用"
+            fi
+        done
         exit 1
     fi
 }
