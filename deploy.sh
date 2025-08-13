@@ -877,11 +877,15 @@ generate_config() {
                     "password": "$UUID"
                 }
             ],
+            "up_mbps": 1000,
+            "down_mbps": 1000,
+            "ignore_client_bandwidth": true,
             "tls": {
                 "enabled": true,
                 "server_name": "www.bing.com",
                 "certificate_path": "cert.pem",
-                "key_path": "private.key"
+                "key_path": "private.key",
+                "alpn": ["h3"]
             }
         },
         {
@@ -905,7 +909,8 @@ generate_config() {
                         "server_port": $REALITY_HANDSHAKE_PORT
                     },
                     "private_key": "$PRIVATE_KEY",
-                    "short_id": ["$SHORT_ID"]
+                    "short_id": ["$SHORT_ID"],
+                    "server_names": ["$DOMAIN"]
                 }
             }
         },
@@ -1090,7 +1095,7 @@ generate_subscription() {
     vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
     
     # Hysteria2
-    hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-$SERVER_IP"
     
     # Save to file
     cat > links.txt << EOF
@@ -1357,7 +1362,7 @@ generate_v2rayn_subscription() {
     local vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
     
     # Hysteria2 link  
-    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-$SERVER_IP"
     
     # Create subscription file
     cat > "subscriptions/${UUID}_v2sub.txt" <<EOL2
@@ -1666,7 +1671,7 @@ display_info() {
     echo "$vmess_link"
     
     # Hysteria2 link
-    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-$SERVER_IP"
     echo
     echo "Hysteria2:"
     echo "$hy2_link"
@@ -1684,7 +1689,7 @@ generate_legacy_links() {
     local vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
     
     # Hysteria2 link
-    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-$SERVER_IP"
     
     # Save links
     cat > links.txt <<EOL5
