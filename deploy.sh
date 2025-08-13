@@ -25,6 +25,8 @@ VLESS_PORT=""
 VMESS_PORT=""
 SERVER_IP=""
 BASE_PATH="$HOME/sbx"
+# 避免 set -u 下未绑定变量错误，为握手端口提供安全默认值
+REALITY_HANDSHAKE_PORT=443
 
 # Check environment
 check_environment() {
@@ -325,6 +327,8 @@ interactive_config() {
     if [[ ! -t 0 ]]; then
         DOMAIN="www.yahoo.com"
         rules_choice="1"
+        # 为非交互模式生成必要的 Reality 配置
+        SHORT_ID=$(openssl rand -hex 4 2>/dev/null || echo $(printf "%08x" $((RANDOM * RANDOM))))
         green "✓ 非交互模式：已使用默认配置"
         green "  伪装域名: $DOMAIN"
         green "  规则模式: ${rules_choice}"
