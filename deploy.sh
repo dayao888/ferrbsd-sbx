@@ -1083,7 +1083,7 @@ generate_subscription() {
     echo "$SERVER_IP" > server.addr
     
     # VLESS Reality
-    vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=$SHORT_ID&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
     
     # VMess WebSocket
     local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
@@ -1350,7 +1350,7 @@ mkdir -p subscriptions
 # Generate V2rayN subscription
 generate_v2rayn_subscription() {
     # VLESS Reality link
-    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=$SHORT_ID&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
     
     # VMess WebSocket link
     local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
@@ -1653,7 +1653,7 @@ display_info() {
     yellow "分享链接（单独使用）:"
     
     # VLESS link
-    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=$SHORT_ID&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
     echo
     echo "VLESS Reality:"
     echo "$vless_link"
@@ -1677,7 +1677,7 @@ display_info() {
 # Generate links for backward compatibility
 generate_legacy_links() {
     # VLESS link
-    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
+    local vless_link="vless://$UUID@$SERVER_IP:$VLESS_PORT?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$DOMAIN&fp=chrome&pbk=$PUBLIC_KEY&sid=$SHORT_ID&type=tcp&headerType=none#VLESS-Reality-$SERVER_IP"
     
     # VMess link
     local vmess_config="{\"v\":\"2\",\"ps\":\"VMess-WS-$SERVER_IP\",\"add\":\"$SERVER_IP\",\"port\":\"$VMESS_PORT\",\"id\":\"$UUID\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"\",\"path\":\"/$UUID-vm\",\"tls\":\"\",\"sni\":\"\",\"alpn\":\"\"}"
@@ -1851,7 +1851,7 @@ main() {
     
     echo
     green "部署完成！享受自由的网络环境！"
-    yellow "管理命令："
+    yellow "管理命令：（请先进入工作目录：cd $BASE_PATH）"
     yellow "  查看状态: ./check_status.sh"
     yellow "  重启服务: ./restart.sh" 
     yellow "  停止服务: ./stop.sh"
