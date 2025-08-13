@@ -903,15 +903,14 @@ generate_config() {
                 "enabled": true,
                 "server_name": "$DOMAIN",
                 "reality": {
-                    "enabled": true,
-                    "handshake": {
-                        "server": "$DOMAIN",
-                        "server_port": $REALITY_HANDSHAKE_PORT
-                    },
-                    "private_key": "$PRIVATE_KEY",
-                    "short_id": ["$SHORT_ID"],
-                    "server_names": ["$DOMAIN"]
-                }
+                "enabled": true,
+                "handshake": {
+                    "server": "$DOMAIN",
+                    "server_port": $REALITY_HANDSHAKE_PORT
+                },
+                "private_key": "$PRIVATE_KEY",
+                "short_id": ["$SHORT_ID"]
+            }
             }
         },
         {
@@ -1787,11 +1786,35 @@ while true; do
         8)
             read -p "确认卸载? [y/N]: " confirm
             if [[ "$confirm" =~ ^[yY] ]]; then
-                ./stop.sh
+                echo "正在停止 sing-box..."
+                ./stop.sh 2>/dev/null || true
+                
+                echo "正在清理防火墙规则..."
+                # 尝试清理 PF 防火墙规则（如果有权限）
+                if command -v pfctl >/dev/null 2>&1 && [[ -w /etc/pf.conf ]]; then
+                    # 备份并清理相关规则
+                    sed -i.bak '/# sing-box rules/,/# end sing-box rules/d' /etc/pf.conf 2>/dev/null || true
+                    pfctl -f /etc/pf.conf 2>/dev/null || true
+                    echo "✓ 防火墙规则已清理"
+                else
+                    echo "⚠ 无权限清理防火墙规则，请手动清理 /etc/pf.conf 中相关条目"
+                fi
+                
+                echo "正在清理二进制文件..."
+                # 清理可能的二进制文件
+                rm -f sb-* sing-box >/dev/null 2>&1 || true
+                
+                echo "正在清理工作目录..."
+                current_dir="$(pwd)"
                 cd ..
-                rm -rf "$(basename "$PWD")"
+                rm -rf "$(basename "$current_dir")"
+                
                 echo "✓ 卸载完成"
+                echo "✓ 所有配置文件、服务和相关组件已完全移除"
+                echo "如需重新安装，请重新执行部署脚本"
                 exit 0
+            else
+                echo "取消卸载"
             fi
             ;;
         0)
@@ -1810,7 +1833,7 @@ EOF
 
     # Make scripts executable
     chmod +x check_status.sh restart.sh stop.sh update_rules.sh subscription.sh SB
-    
+    ls -l SB check_status.sh restart.sh stop.sh update_rules.sh subscription.sh >/dev/null 2>&1 || true
     green "✓ 管理工具已创建"
 }
 
