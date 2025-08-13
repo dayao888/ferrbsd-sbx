@@ -49,6 +49,9 @@ else
   PUBLIC_KEY=""
 fi
 
+# Read short_id from config
+SHORT_ID=$(jq -r '.inbounds[1].tls.reality.short_id[0]' config.json 2>/dev/null || echo "")
+
 # Get server IP
 if [[ -f server.addr ]]; then
     SERVER_IP=$(cat server.addr)
@@ -170,6 +173,20 @@ generate_singbox_subscription() {
         # 在线模式
         rule_set_json='[
             {
+                "tag": "geosite-category-ads-all",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",
+                "download_detour": "direct"
+            },
+            {
+                "tag": "geosite-geolocation-!cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs",
+                "download_detour": "direct"
+            },
+            {
                 "tag": "geoip-cn",
                 "type": "remote",
                 "format": "binary",
@@ -187,6 +204,18 @@ generate_singbox_subscription() {
     else
         # 本地模式和混合模式都使用本地路径
         rule_set_json='[
+            {
+                "tag": "geosite-category-ads-all",
+                "type": "local",
+                "format": "binary",
+                "path": "rules/geosite-category-ads-all.srs"
+            },
+            {
+                "tag": "geosite-geolocation-!cn",
+                "type": "local",
+                "format": "binary",
+                "path": "rules/geosite-geolocation-!cn.srs"
+            },
             {
                 "tag": "geoip-cn",
                 "type": "local",
@@ -210,21 +239,55 @@ generate_singbox_subscription() {
     "dns": {
         "servers": [
             {
-                "tag": "google",
-                "address": "8.8.8.8"
+                "tag": "remote",
+                "type": "https",
+                "server": "cloudflare-dns.com",
+                "server_port": 443,
+                "detour": "select"
             },
             {
                 "tag": "local",
-                "address": "223.5.5.5",
+                "type": "https",
+                "server": "dns.alidns.com",
+                "server_port": 443,
                 "detour": "direct"
+            },
+            {
+                "tag": "fakeip",
+                "type": "fakeip"
+            },
+            {
+                "tag": "block",
+                "type": "rcode",
+                "rcode": 3
             }
         ],
         "rules": [
             {
+                "rule_set": ["geosite-category-ads-all"],
+                "server": "block"
+            },
+            {
                 "rule_set": ["geosite-cn"],
                 "server": "local"
+            },
+            {
+                "rule_set": ["geosite-geolocation-!cn"],
+                "server": "remote"
+            },
+            {
+                "rule_set": ["geosite-geolocation-!cn"],
+                "disable_cache": true,
+                "server": "remote"
             }
-        ]
+        ],
+        "fakeip": {
+            "enabled": true,
+            "inet4_range": "198.18.0.0/15",
+            "inet6_range": "fc00::/18"
+        },
+        "independent_cache": true,
+        "final": "remote"
     },
     "inbounds": [
         {
@@ -248,7 +311,7 @@ generate_singbox_subscription() {
                 "reality": {
                     "enabled": true,
                     "public_key": "$PUBLIC_KEY",
-                    "short_id": ""
+                    "short_id": "$SHORT_ID"
                 }
             }
         },
