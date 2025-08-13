@@ -355,6 +355,44 @@ interactive_config() {
             ;;
     esac
     
+    # Test Reality handshake port
+    blue "正在检测Reality握手端口..."
+    REALITY_HANDSHAKE_PORT=443
+    
+    if command -v nc >/dev/null 2>&1; then
+        # Use nc for port testing
+        if nc -z "$DOMAIN" 443 >/dev/null 2>&1; then
+            REALITY_HANDSHAKE_PORT=443
+            green "✓ 443端口连通正常"
+        elif nc -z "$DOMAIN" 80 >/dev/null 2>&1; then
+            REALITY_HANDSHAKE_PORT=80
+            yellow "⚠ 443端口不通，回退到80端口"
+        else
+            REALITY_HANDSHAKE_PORT=443
+            yellow "⚠ 端口检测失败，默认使用443端口"
+        fi
+    else
+        # Fallback: use curl for basic connectivity test
+        if curl -s --max-time 5 "https://$DOMAIN" >/dev/null 2>&1; then
+            REALITY_HANDSHAKE_PORT=443
+            green "✓ HTTPS连通正常，使用443端口"
+        elif curl -s --max-time 5 "http://$DOMAIN" >/dev/null 2>&1; then
+            REALITY_HANDSHAKE_PORT=80
+            yellow "⚠ HTTPS不通但HTTP可用，使用80端口"
+        else
+            REALITY_HANDSHAKE_PORT=443
+            yellow "⚠ 连通性测试失败，默认使用443端口"
+        fi
+    fi
+    
+    # Generate random short_id (8-character hex string)
+    SHORT_ID=$(openssl rand -hex 4 2>/dev/null || echo $(printf "%08x" $((RANDOM * RANDOM))))
+    
+    green "✓ Reality配置完成"
+    green "  伪装域名: $DOMAIN"
+    green "  握手端口: $REALITY_HANDSHAKE_PORT"
+    green "  Short ID: $SHORT_ID"
+    
     # Rules config
     echo
     yellow "规则配置："
@@ -495,10 +533,7 @@ generate_config() {
             "rules": [
                 {
                     "rule_set": [
-                        "geosite-category-ads-all",
-                        "geosite-malware",
-                        "geosite-phishing",
-                        "geosite-cryptominers"
+                        "geosite-category-ads-all"
                     ],
                     "outbound": "block"
                 },
@@ -525,67 +560,56 @@ generate_config() {
                 }
             ],
             "rule_set": [
-                {
-                    "tag": "geosite-category-ads-all",
-                    "type": "remote",
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
-                },
-                {
-                    "tag": "geosite-malware",
-                    "type": "remote", 
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-malware.srs"
-                },
-                {
-                    "tag": "geosite-phishing",
-                    "type": "remote",
-                    "format": "binary", 
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-phishing.srs"
-                },
-                {
-                    "tag": "geosite-cryptominers",
-                    "type": "remote",
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cryptominers.srs"
-                },
-                {
-                    "tag": "geosite-private",
-                    "type": "remote",
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-private.srs"
-                },
-                {
-                    "tag": "geoip-private", 
-                    "type": "remote",
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-private.srs"
-                },
-                {
-                    "tag": "geosite-geolocation-!cn",
-                    "type": "remote",
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
-                },
-                {
-                    "tag": "geoip-telegram",
-                    "type": "remote", 
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-telegram.srs"
-                },
-                {
-                    "tag": "geosite-cn",
-                    "type": "remote",
-                    "format": "binary",
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
-                },
-                {
-                    "tag": "geoip-cn",
-                    "type": "remote",
-                    "format": "binary", 
-                    "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
-                }
-            ]
+        {
+          "tag": "geosite-category-ads-all",
+          "type": "remote",
+          "format": "binary",
+          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",
+          "download_detour": "direct"
+        },
+        {
+          "tag": "geosite-private",
+          "type": "remote",
+          "format": "binary",
+          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/private.srs",
+          "download_detour": "direct"
+        },
+        {
+          "tag": "geoip-private",
+          "type": "remote",
+          "format": "binary",
+          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/private.srs",
+          "download_detour": "direct"
+        },
+        {
+          "tag": "geosite-geolocation-!cn",
+          "type": "remote",
+          "format": "binary",
+          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs",
+          "download_detour": "direct"
+        },
+        {
+          "tag": "geoip-telegram",
+          "type": "remote",
+          "format": "binary",
+          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs",
+          "download_detour": "direct"
+        },
+        {
+          "tag": "geosite-cn",
+          "type": "remote",
+          "format": "binary",
+          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
+          "download_detour": "direct"
+        },
+        {
+          "tag": "geoip-cn",
+          "type": "remote",
+          "format": "binary",
+          "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs",
+          "download_detour": "direct"
+        }
+      ]
         }'
     elif [[ "${rules_choice:-1}" == "2" ]]; then
         # Local rules - 使用本地 .srs 文件
@@ -593,9 +617,7 @@ generate_config() {
             "rules": [
                 {
                     "rule_set": [
-                        "geosite-category-ads-all",
-                        "geosite-malware",
-                        "geosite-phishing"
+                        "geosite-category-ads-all"
                     ],
                     "outbound": "block"
                 },
@@ -627,18 +649,6 @@ generate_config() {
                     "type": "local",
                     "format": "binary",
                     "path": "rules/geosite-category-ads-all.srs"
-                },
-                {
-                    "tag": "geosite-malware",
-                    "type": "local",
-                    "format": "binary",
-                    "path": "rules/geosite-malware.srs"
-                },
-                {
-                    "tag": "geosite-phishing",
-                    "type": "local",
-                    "format": "binary",
-                    "path": "rules/geosite-phishing.srs"
                 },
                 {
                     "tag": "geosite-private",
@@ -763,10 +773,7 @@ generate_config() {
                 "rules": [
                     {
                         "rule_set": [
-                            "geosite-category-ads-all",
-                            "geosite-malware",
-                            "geosite-phishing",
-                            "geosite-cryptominers"
+                            "geosite-category-ads-all"
                         ],
                         "outbound": "block"
                     },
@@ -797,61 +804,50 @@ generate_config() {
                         "tag": "geosite-category-ads-all",
                         "type": "remote",
                         "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs"
-                    },
-                    {
-                        "tag": "geosite-malware",
-                        "type": "remote", 
-                        "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-malware.srs"
-                    },
-                    {
-                        "tag": "geosite-phishing",
-                        "type": "remote",
-                        "format": "binary", 
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-phishing.srs"
-                    },
-                    {
-                        "tag": "geosite-cryptominers",
-                        "type": "remote",
-                        "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cryptominers.srs"
+                        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",
+                        "download_detour": "direct"
                     },
                     {
                         "tag": "geosite-private",
                         "type": "remote",
                         "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-private.srs"
+                        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/private.srs",
+                        "download_detour": "direct"
                     },
                     {
-                        "tag": "geoip-private", 
+                        "tag": "geoip-private",
                         "type": "remote",
                         "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-private.srs"
+                        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/private.srs",
+                        "download_detour": "direct"
                     },
                     {
                         "tag": "geosite-geolocation-!cn",
                         "type": "remote",
                         "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs"
+                        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs",
+                        "download_detour": "direct"
                     },
                     {
                         "tag": "geoip-telegram",
-                        "type": "remote", 
+                        "type": "remote",
                         "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-telegram.srs"
+                        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs",
+                        "download_detour": "direct"
                     },
                     {
                         "tag": "geosite-cn",
                         "type": "remote",
                         "format": "binary",
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs"
+                        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
+                        "download_detour": "direct"
                     },
                     {
                         "tag": "geoip-cn",
                         "type": "remote",
-                        "format": "binary", 
-                        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs"
+                        "format": "binary",
+                        "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs",
+                        "download_detour": "direct"
                     }
                 ]
             }'
@@ -902,10 +898,10 @@ generate_config() {
                     "enabled": true,
                     "handshake": {
                         "server": "$DOMAIN",
-                        "server_port": 443
+                        "server_port": $REALITY_HANDSHAKE_PORT
                     },
                     "private_key": "$PRIVATE_KEY",
-                    "short_id": [""]
+                    "short_id": ["$SHORT_ID"]
                 }
             }
         },
@@ -1236,10 +1232,10 @@ download_success=0
 if download_file "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-cn.srs" "rules/geoip-cn.srs" && \
    download_file "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite-cn.srs" "rules/geosite-cn.srs" && \
    download_file "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite-geolocation-!cn.srs" "rules/geosite-geolocation-!cn.srs" && \
-   download_file "https://github.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs" "rules/geosite-category-ads-all.srs" && \
-   download_file "https://github.com/SagerNet/sing-geosite/rule-set/geosite-private.srs" "rules/geosite-private.srs" && \
-   download_file "https://github.com/SagerNet/sing-geoip/rule-set/geoip-private.srs" "rules/geoip-private.srs" && \
-   download_file "https://github.com/SagerNet/sing-geoip/rule-set/geoip-telegram.srs" "rules/geoip-telegram.srs"; then
+   download_file "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs" "rules/geosite-category-ads-all.srs" && \
+    download_file "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/private.srs" "rules/geosite-private.srs" && \
+    download_file "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/private.srs" "rules/geoip-private.srs" && \
+    download_file "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/telegram.srs" "rules/geoip-telegram.srs"; then
     download_success=1
 fi
 
@@ -1438,6 +1434,20 @@ generate_singbox_subscription() {
         # 在线模式
         rule_set_json='[
             {
+                "tag": "geosite-category-ads-all",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/category-ads-all.srs",
+                "download_detour": "direct"
+            },
+            {
+                "tag": "geosite-geolocation-!cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/geolocation-!cn.srs",
+                "download_detour": "direct"
+            },
+            {
                 "tag": "geoip-cn",
                 "type": "remote",
                 "format": "binary",
@@ -1455,6 +1465,18 @@ generate_singbox_subscription() {
     else
         # 本地模式和混合模式都使用本地路径
         rule_set_json='[
+            {
+                "tag": "geosite-category-ads-all",
+                "type": "local",
+                "format": "binary",
+                "path": "rules/geosite-category-ads-all.srs"
+            },
+            {
+                "tag": "geosite-geolocation-!cn",
+                "type": "local",
+                "format": "binary",
+                "path": "rules/geosite-geolocation-!cn.srs"
+            },
             {
                 "tag": "geoip-cn",
                 "type": "local",
@@ -1478,21 +1500,55 @@ generate_singbox_subscription() {
     "dns": {
         "servers": [
             {
-                "tag": "google",
-                "address": "8.8.8.8"
+                "tag": "remote",
+                "type": "https",
+                "server": "cloudflare-dns.com",
+                "server_port": 443,
+                "detour": "select"
             },
             {
                 "tag": "local",
-                "address": "223.5.5.5",
+                "type": "https",
+                "server": "dns.alidns.com",
+                "server_port": 443,
                 "detour": "direct"
+            },
+            {
+                "tag": "fakeip",
+                "type": "fakeip"
+            },
+            {
+                "tag": "block",
+                "type": "rcode",
+                "rcode": 3
             }
         ],
         "rules": [
             {
+                "rule_set": ["geosite-category-ads-all"],
+                "server": "block"
+            },
+            {
                 "rule_set": ["geosite-cn"],
                 "server": "local"
+            },
+            {
+                "rule_set": ["geosite-geolocation-!cn"],
+                "server": "remote"
+            },
+            {
+                "rule_set": ["geosite-geolocation-!cn"],
+                "disable_cache": true,
+                "server": "remote"
             }
-        ]
+        ],
+        "fakeip": {
+            "enabled": true,
+            "inet4_range": "198.18.0.0/15",
+            "inet6_range": "fc00::/18"
+        },
+        "independent_cache": true,
+        "final": "remote"
     },
     "inbounds": [
         {
@@ -1516,7 +1572,7 @@ generate_singbox_subscription() {
                 "reality": {
                     "enabled": true,
                     "public_key": "$PUBLIC_KEY",
-                    "short_id": ""
+                    "short_id": "$SHORT_ID"
                 }
             }
         },
