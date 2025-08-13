@@ -92,7 +92,7 @@ generate_v2rayn_subscription() {
     local vmess_link="vmess://$(printf %s "$vmess_config" | base64 | tr -d '\n')"
     
     # Hysteria2 link  
-    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-$SERVER_IP"
     
     # Create subscription file
     cat > "subscriptions/${UUID}_v2sub.txt" <<EOF
@@ -401,7 +401,7 @@ display_info() {
     echo "$vmess_link"
     
     # Hysteria2 link
-    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com#Hysteria2-$SERVER_IP"
+    local hy2_link="hysteria2://$UUID@$SERVER_IP:$HY2_PORT?insecure=1&sni=www.bing.com&alpn=h3#Hysteria2-$SERVER_IP"
     echo
     echo "Hysteria2:"
     echo "$hy2_link"
